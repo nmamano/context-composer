@@ -539,6 +539,12 @@ Session {
   cheap; edits to *early* frames invalidate the tail.
 - **UX consequence:** nudge users to edit/operate on **recent** frames and let early
   frames "settle" into stable context. Keep the tail hot, the head stable.
+- **Composer cache duties (it owns the exact request bytes — see
+  [Appendix B](#appendix-b--reference-implementation-notes)):** (a) serialize unchanged
+  frames **deterministically** — identical bytes and key order every turn — so it never
+  busts the cache by accident; (b) keep the provider's cache-prefix markers (e.g.
+  `cache_control`) on the **stable head**, above the large tool + system block, so that
+  high-value prefix is cache-read rather than reprocessed each turn.
 - For a demo, full re-tokenization on each mutation is acceptable and honest — nobody
   is watching inference cost. The pitch is "here's the UX we want; here's how a
   provider *could* support it efficiently," not "we solved the infra."
@@ -661,6 +667,9 @@ turns map to frames.
   unaware) — but `stream-json` stdin injection did not, and the rendered-context boundary
   above is the more complete interception point.
 
-*Open question:* reconciling per-call boundary rewrites with the agent's own evolving
-transcript across turns — i.e., how fully Context Composer takes ownership of the
-outgoing `messages` array each turn.
+**Full ownership of the outgoing request.** Each call, Context Composer **replaces** the
+request body with the array composed from its own frame state — it does not patch what
+the agent assembled. The wrapped agent is reduced to a model-runner + tool-executor, and
+its own evolving transcript is irrelevant (overwritten every turn); this is what makes
+total control hold. Owning the exact request bytes carries two cache duties — see the
+caching note in [§9](#9-provider-assumptions--constraints).
