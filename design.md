@@ -2,9 +2,7 @@
 
 *Semantic Frame Context Management System*
 
-> Status: design draft, distilled from the June 5 2026 voice design session
-> (see [`raw_transcript.md`](./raw_transcript.md)). This document supersedes the
-> transcript as the source of truth for the design.
+> Status: design draft. Background material: [`raw_transcript.md`](./raw_transcript.md).
 
 ---
 
@@ -47,11 +45,10 @@ system operates on.
 - **Default extraction:** each user turn and its corresponding assistant turn form a
   frame. **All of the assistant turn's tool calls and their results are bundled into
   the same frame** — tool calls are *not* their own frames.
-  *(Rationale, from the session: splitting on tool-call boundaries produces
-  meaningless fragments like a 3-word "and now let me check this repo" frame wedged
-  between two tool calls. Keeping the assistant turn whole keeps frames semantically
-  coherent. Nesting frames-within-frames is explicitly rejected: the model is
-  **flattened**.)*
+  *(Rationale: splitting on tool-call boundaries produces meaningless fragments — e.g.
+  a 3-word "and now let me check this repo" frame wedged between two tool calls.
+  Keeping the assistant turn whole keeps frames semantically coherent. Nesting
+  frames-within-frames is rejected: the model is **flattened**.)*
 - **Granularity is a starting point, not a commitment.** Rather than trying to get
   boundaries perfect upfront, the system gives you operations (`combine`, `split`) to
   reshape frames after the fact. This is the central design bet.
@@ -60,6 +57,12 @@ system operates on.
 - **Sub-agent calls** are treated exactly like tool calls: the assistant invokes a
   sub-agent, gets a result back within its turn, and it all stays in the same frame.
   Sub-agents are *not* separate conversation trees.
+- **Large pasted blobs are not auto-split.** A big file pasted into a turn stays inside
+  that turn's frame; the user reshapes it on demand with `split` or `offload`. This
+  keeps extraction dumb-and-simple and is consistent with the reshape-after-the-fact bet
+  above — no size heuristics at creation time.
+- **The system prompt is itself a frame** — a pinned **system frame**. See
+  [§2.7](#27-the-system-frame).
 
 ### 2.2 Operation
 
@@ -83,8 +86,16 @@ chosen per operation:
   descendant branches.
 - **Isolated frames** — branch-specific; changes don't affect other branches.
 
-This directly answers the session's question "if I edit a past frame, does it affect
-all branches built on top of it?" — the answer is **the user chooses, per op.**
+So when you operate on a past frame, **you choose per operation** whether the change
+ripples forward to descendant branches.
+
+Two related scope boundaries:
+- **No git-style branch merge.** Combining two *frames* is
+  [`combine`](#5b-structural-operations); combining two *branch histories* is out of
+  scope (see [future work](#10-future-work)).
+- **Cross-branch combination is only via explicit `import`** — see
+  [§5.F](#5f-composition--runtime). Branches are isolated timelines; `import`
+  (cherry-pick) is the single bridge between them.
 
 ### 2.5 External memory
 
@@ -95,6 +106,14 @@ reference**, freeing window space while keeping the content reachable on demand.
 data already exists in storage; offload only changes how the frame is *represented* in
 the working context.
 
+**Retrieval needs no special mechanism.** The offload stub carries the
+file path, and — assuming the agent has a file-read tool ([§9](#9-provider-assumptions--constraints)) —
+the model simply **reads the file** when it needs the content; no custom fetch tool, no
+heuristic intent-detection. When it does, the content re-enters the conversation as a
+normal **file-read tool-result frame**, which is itself a fully manageable frame (you
+can re-`offload`/`compact` it). A user-facing `restore` exists only as a convenience for
+putting content back inline without a model round-trip.
+
 ### 2.6 The model is unaware (key principle)
 
 When the user performs an operation, the **running LLM does not see the operation** —
@@ -102,6 +121,20 @@ it only ever sees the resulting mutated context. From the model's perspective, t
 context simply *is* whatever it now is. The operation history is **metadata for the
 user, not signal for the model.** ("We're doing surgery on its brain; it doesn't know
 what's going on.")
+
+### 2.7 The system frame
+
+The non-conversational scaffolding at the head of the context — the
+base system prompt, tool definitions, and project instructions — is represented as a
+single **pinned system frame** at the top of the frame view, **fully part of the model
+context** and operable like any other frame. In particular you can `compact` or
+`offload` it to reclaim tokens; `delete` is guarded (allowed but warned, since it strips
+the model's scaffolding).
+
+This makes the paradigm fully visible — *the whole context is frames, even the parts
+you didn't write* — and yields a strong demo beat: offloading the system frame to show
+live token reclamation. (Assumes the system prompt is composable by the harness, not a
+fixed opaque preamble — see [§9](#9-provider-assumptions--constraints).)
 
 ---
 
@@ -120,10 +153,10 @@ testable independently, and means the UI can never do something the CLI can't.
                 ▼                                       ▼
         ┌───────────────────────────────────────────────────┐
         │            ctx CLI  (core operation API)           │
-        │  list · show · add · delete · combine · split ·    │
-        │  edit · compact · strip · summarize · offload ·    │
-        │  restore · import · branch · checkout · merge ·    │
-        │  revert · history · diff · compose · send          │
+        │  list · show · add · delete · combine · split     │
+        │  edit · compact · strip · summarize · offload     │
+        │  restore · import · branch · checkout · revert    │
+        │  tag · history · diff · status · compose · send    │
         └───────────────────────┬───────────────────────────┘
                                  ▼
         ┌───────────────────────────────────────────────────┐
@@ -131,12 +164,21 @@ testable independently, and means the UI can never do something the CLI can't.
         └───────────────────────┬───────────────────────────┘
                                  ▼
         ┌──────────────────────┐   ┌──────────────────────────┐
-        │  Durable frame store  │   │  LLM backend (Claude API, │
-        │  + external memory    │   │  Isomux-style)            │
+        │  Durable frame store  │   │  LLM / agent runtime     │
+        │  + external memory    │   │  (see §9 assumptions)    │
         └──────────────────────┘   └──────────────────────────┘
 ```
 
 Each CLI command emits JSON (machine-readable for the UI/scripts) or plain text.
+
+> **Implementation note (not design surface):** the reference prototype realizes the
+> backend by wrapping an existing coding agent — Claude Code, driven via its SDK. It
+> manages the message history the agent sees and reuses the agent's **native
+> facilities** rather than reimplementing them: tools, sub-agents (its Task tool),
+> permissions, and the file-read tool that powers offload retrieval
+> ([§5.D](#5d-memory-operations)). This is an implementation choice, not part of the
+> design — any runtime satisfying the assumptions in
+> [§9](#9-provider-assumptions--constraints) would work.
 
 ---
 
@@ -194,7 +236,6 @@ This is the exhaustive list of operations. They fall into six groups:
 | `restore` | D | Re-inject an offloaded frame's full text |
 | `branch` | E | Create a branch from a frame/commit |
 | `checkout` | E | Move HEAD to a branch or commit |
-| `merge` | E | Merge branches (shared vs isolated semantics) |
 | `revert` | E | Roll back to a previous commit |
 | `tag` | E | Name a checkpoint state (optional) |
 | `compose` | F | Build the exact context payload for the next call |
@@ -225,8 +266,7 @@ offloaded frames, and any uncommitted/pending changes.
 
 **`add [--text <t>] [--at <pos>]`** — Manually create a new frame, either from pasted
 text or empty for editing. Use cases: inject an instruction/note, seed context, or
-paste content the conversation didn't produce. *(One of the operations the user
-explicitly wanted: "we can add frames.")*
+paste content the conversation didn't produce.
 
 **`delete <frame...>`** — Remove one or more frames from the active context. The
 canonical use case: prune a tangent so the model stops attending to noise. The frame
@@ -257,7 +297,13 @@ conversations.
 
 **`edit <frame> [--text <t>]`** — Manually replace or modify a frame's text, giving
 the user full authorship over what the model sees. Tracked as an `edit` commit.
-*(UX nudge: prefer editing recent frames — see [§9](#9-provider-assumptions--constraints).)*
+*Semantics:* editing keeps `createdAt` **immutable** (it marks when the
+frame entered the conversation — relevant to ordering and caching) and bumps
+`modifiedAt`; it is **non-destructive downstream** — later frames are not regenerated,
+only what the next `compose`/`send` uses changes (the cache cost is paid at next
+`send`). Diffs render as a standard text diff (`fullText` before vs after) in the
+history panel. *(UX nudge: prefer editing recent frames — see
+[§9](#9-provider-assumptions--constraints).)*
 
 **`compact <frame>`** — Use the LLM to **summarize an entire frame** down to its
 essence ("user asked X, assistant explained Y") while preserving its semantic
@@ -277,10 +323,10 @@ finer-grained sibling of `compact`/`strip`.
 frame's title/summary. Titles/summaries are auto-generated on creation; this lets the
 user correct them or refresh after edits.
 
-> **Why so many content ops?** The session's pivotal realization: there isn't a single
-> `compact` primitive — there's a *rich toolkit* for reshaping the part of the context
-> you care about. `compact`, `strip`, `summarize`, `edit`, `combine`, `split` are all
-> facets of "reshape this region of context to be exactly as useful as it needs to be."
+> **Why so many content ops?** There isn't a single `compact` primitive — there's a
+> *rich toolkit* for reshaping the part of the context you care about. `compact`,
+> `strip`, `summarize`, `edit`, `combine`, `split` are all facets of "reshape this
+> region of context to be exactly as useful as it needs to be."
 
 ---
 
@@ -288,15 +334,17 @@ user correct them or refresh after edits.
 
 **`offload <frame>`** — Replace a frame's full text *in the active context* with a
 **reference**: a short note ("here was a chunk where the user discussed X — summary:
-…; full content in `frames/<id>.md`") plus a file pointer. Frees window tokens while
+…; full content in `frames/<id>.md`") plus the file path. Frees window tokens while
 keeping content reachable. *(The frame's data is already persisted; offload only
 changes its representation in the working context. It is opt-in / on-demand, not
-automatic.)*
+automatic.)* The model retrieves it on demand by **reading the file with its file-read
+tool** — the stub gives it the path. No custom fetch tool, no intent-guessing.
 
-**`restore <frame>`** — Re-inject a previously offloaded frame's full text back into
-the active context. Triggered when the running model signals it needs the content
-(e.g., "can you show me that earlier discussion about X"); the system reads intent
-from what the model says and fetches the file for the next turn.
+**`restore <frame>`** — Re-inject a previously offloaded frame's full text inline. This
+is a **user convenience only**; the *model* doesn't need it, since it can just read the
+offloaded file directly. Note that when the model reads an offloaded file, the content
+re-enters the conversation as a normal **file-read tool-result frame** — itself a fully
+manageable frame you can re-`offload`/`compact`.
 
 **`persist` (automatic, not a user command)** — Every frame is written to durable
 storage on creation, so a user can close the tab and resume later. This underpins
@@ -318,9 +366,11 @@ test prompt/strategy variations side by side.
 **`checkout <branch|commit>`** — Move HEAD to a branch or a past commit, switching the
 active context to that state.
 
-**`merge <branch> [--shared|--isolated]`** — Combine branches. The `--shared` /
-`--isolated` flag selects whether merged/ancestor frames ripple to descendants or stay
-branch-local (see [§2.4](#24-branching)).
+> **No branch `merge` (out of scope).** Git-style branch merging — combining two
+> *histories* with conflict resolution when shared-ancestor frames diverge — is
+> deferred to [future work](#10-future-work). Merging two *frames* is
+> [`combine`](#5b-structural-operations); pulling frames across branches is
+> [`import`](#5b-structural-operations).
 
 **`revert <commit>`** — Roll the active context back to a previous commit state.
 Nothing is lost — you can move forward again or branch from the reverted point.
@@ -338,14 +388,15 @@ current representation: deletions omitted, compactions/edits applied, offloaded 
 rendered as references. This is where the abstract frame graph becomes a concrete
 prompt. Output is inspectable (you can see precisely what the model will receive).
 
-- **Default branch selection:** the active branch's HEAD. Cross-branch composition
-  (pulling frames from multiple branches into one payload) is **out of scope for v1**
-  but anticipated (see [§10](#10-open-questions) / [§11](#11-future-work)). Note that
-  `import` already provides a manual path to bring a foreign frame into the active
-  branch.
+- **Branch selection:** `compose` **always walks a single branch path**
+  to HEAD. Cross-branch combination is done *only* via explicit
+  [`import`](#5b-structural-operations)/cherry-pick (a real commit) — never by composing
+  across branches. This keeps provenance honest (everything in the payload literally
+  exists on the active branch) and preserves the model-unaware principle. Native
+  multi-branch compose is [future work](#10-future-work).
 
 **`send [--text <t>]`** — Issue the next model turn: `compose` the context, append the
-new user input, call the LLM backend, and capture the response as a new frame. The
+new user input, hand it to the backend, and capture the response as a new frame. The
 model sees only the composed (mutated) state — never the operation history.
 
 ---
@@ -360,9 +411,10 @@ model sees only the composed (mutated) state — never the operation history.
 3. **Tool-call spam.** An assistant turn made three calls with huge outputs. `strip`
    two results and `summarize` the third; reasoning stays, bloat goes.
 4. **Branch to explore.** `branch` from an earlier frame, try a different direction,
-   keep the original. Later `merge` insights or `import` the best frames across.
+   keep the original. Later `import` the best frames from one branch back into another.
 5. **Offload to external memory.** A big but maybe-needed frame: `offload` it to a
-   file; the window keeps a summary + pointer; `restore` if the model asks for it.
+   file; the window keeps a summary + path; the model reads the file with its native
+   tool if it needs the detail (or you `restore` it manually).
 6. **Cross-conversation reuse.** Found a great explanation in another chat? `import`
    that frame into the current branch — cherry-pick across "repos."
 
@@ -385,6 +437,7 @@ Frame {
   parentFrameId : string | null
   isOffloaded   : bool
   fileReference : string | null   // path when offloaded
+  pinned        : bool            // true for the system frame; delete is guarded
   provenance    : OpRef[]         // operations that produced this frame state
 }
 
@@ -393,7 +446,7 @@ Operation /* = Commit */ {
   type            : "add" | "delete" | "combine" | "split" | "move" |
                     "import" | "edit" | "compact" | "strip" | "summarize" |
                     "retitle" | "offload" | "restore" | "branch" |
-                    "checkout" | "merge" | "revert" | "tag"
+                    "checkout" | "revert" | "tag"
   affectedFrameIds: string[]
   params          : object        // op-specific (e.g., split marker, summarize range)
   timestamp       : timestamp
@@ -427,6 +480,9 @@ Session {
 - **Frame view = Git-style tree.** Nodes = frame states (title + summary, color-coded
   by branch and/or frame type); edges = operations (labeled with op type). Click a
   node → expand full text; right-click → operation menu; drag → create a branch.
+- **Pinned system frame** at the top of the tree (system prompt / tool definitions /
+  project instructions), visually distinct and operable like any frame — with `delete`
+  guarded.
 - **Frame details panel** — full text with inline edit, summary, linked tool calls,
   file reference if offloaded, and provenance.
 - **Operation/history panel** — the commit log with filtering and side-by-side diffs;
@@ -451,6 +507,12 @@ Session {
    which Claude and ChatGPT both already do. Context Composer's frame editing is just
    leveraging this existing capability; it asks for **nothing new** from the provider.
 4. The full message structure is readable, not just rendered text.
+5. The agent has a **file-reading tool**, so an offloaded frame can be retrieved by the
+   model simply reading its file on demand ([§5.D](#5d-memory-operations)) — no bespoke
+   fetch mechanism needed.
+6. The **system prompt is composable** by the harness (not a fixed opaque preamble), so
+   it can be represented and operated on as the pinned system frame
+   ([§2.7](#27-the-system-frame)).
 
 **Caching / efficiency:**
 
@@ -475,28 +537,14 @@ Session {
 
 ---
 
-## 10. Open questions
-
-- **Cross-branch composition.** Should `compose` ever pull frames from multiple
-  branches into one payload, or always one branch path? (v1: single active branch;
-  `import` covers manual cross-branch needs.)
-- **Detecting `restore` intent.** How reliably can we read "the model wants an
-  offloaded frame back" from its output? Heuristic now; could become explicit.
-- **Edit-as-operation semantics.** `edit` is tracked as a commit — confirm whether a
-  direct text edit should also bump `createdAt` vs only `modifiedAt`, and how diffs
-  render.
-- **Merge semantics edge cases.** Conflict handling when shared-ancestor frames have
-  diverged across branches.
-- **Frame boundaries for non-turn content.** System prompts, large pasted blobs —
-  one frame or split on creation?
-
----
-
-## 11. Future work
+## 10. Future work
 
 - **Smarter frame extraction.** Use the LLM to detect true semantic boundaries and
   auto-merge/split, instead of the default turn-based segmentation.
 - **Cross-branch composition** as a first-class compose mode.
+- **Git-style branch merge** with frame-level conflict resolution.
+- **Auto-restore on detected intent** — heuristically re-inject an offloaded frame when
+  the model's output implies it's needed.
 - **Collaboration.** Shared contexts, visible operation history, suggested operations,
   rollback by others.
 - **Agentic operations.** The model itself proposes operations ("this tangent should
@@ -511,6 +559,8 @@ Session {
 
 - **Frame** — addressable semantic unit of context (default: a user+assistant turn,
   tool calls bundled).
+- **System frame** — the pinned frame holding the system prompt / tool definitions /
+  project instructions; operable (notably `compact`/`offload`) with `delete` guarded.
 - **Operation** — a transformation on frames/branches; each mutating one is a commit.
 - **Compose** — assembling the concrete context payload sent to the model.
 - **Offload / Restore** — swap a frame for a reference to free window space / bring it
