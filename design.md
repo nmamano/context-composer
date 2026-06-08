@@ -61,8 +61,8 @@ system operates on.
   that turn's frame; the user reshapes it on demand with `split` or `offload`. This
   keeps extraction dumb-and-simple and is consistent with the reshape-after-the-fact bet
   above — no size heuristics at creation time.
-- **The system prompt is itself a frame** — a pinned **system frame**. See
-  [§2.7](#27-the-system-frame).
+- **The system prompt is itself a frame** — captured like any other, no special type.
+  See [§2.7](#27-everything-the-model-receives-is-a-frame).
 
 ### 2.2 Operation
 
@@ -122,19 +122,32 @@ context simply *is* whatever it now is. The operation history is **metadata for 
 user, not signal for the model.** ("We're doing surgery on its brain; it doesn't know
 what's going on.")
 
-### 2.7 The system frame
+### 2.7 Everything the model receives is a frame
 
-The non-conversational scaffolding at the head of the context — the
-base system prompt, tool definitions, and project instructions — is represented as a
-single **pinned system frame** at the top of the frame view, **fully part of the model
-context** and operable like any other frame. In particular you can `compact` or
-`offload` it to reclaim tokens; `delete` is guarded (allowed but warned, since it strips
-the model's scaffolding).
+There are **no frame types.** Every frame is uniform and supports the same operations; a
+frame is just an addressable chunk of context. What it *holds* varies — a conversation
+turn, the system prompt, a block of tool definitions, a chunk of agent-injected memory —
+but none of those are special classes.
 
-This makes the paradigm fully visible — *the whole context is frames, even the parts
-you didn't write* — and yields a strong demo beat: offloading the system frame to show
-live token reclamation. (Assumes the system prompt is composable by the harness, not a
-fixed opaque preamble — see [§9](#9-provider-assumptions--constraints).)
+Frames cover the **entire context the model receives**, not only the conversation. The
+non-conversational preamble — system prompt, tool definitions, and **anything the agent
+injects** (project instructions, retrieved memory, …) — is captured as frame(s) at the
+head of the list. Turns are frames; the preamble is frames; it is all one uniform list.
+
+**Total control, by capture — not by constraint.** Context Composer is *unopinionated
+about what enters* the context: it does not seal, disable, or restrict the agent's
+injectors. It captures **everything the model actually receives** as frames and lets you
+manipulate any of it — keep, compact, edit, offload, or delete. *"What's necessary and
+nothing but that"* is achieved by your surgery on the complete realized context, not by
+policing its sources. (Same reshape-after-the-fact bet as [§2.1](#21-frame), applied to
+provenance.)
+
+A preamble frame is **just a frame** — no pinning, no guard rails. You can compact it,
+offload it (a strong demo beat — live token reclamation), or delete it outright; deleting
+it strips the model's scaffolding, and that is your call to make, not the tool's.
+Capturing the complete realized context requires observing it at the right layer — see
+[§9](#9-provider-assumptions--constraints) and
+[Appendix B](#appendix-b--reference-implementation-notes).
 
 ---
 
@@ -178,7 +191,9 @@ Each CLI command emits JSON (machine-readable for the UI/scripts) or plain text.
 > permissions, and the file-read tool that powers offload retrieval
 > ([§5.D](#5d-memory-operations)). This is an implementation choice, not part of the
 > design — any runtime satisfying the assumptions in
-> [§9](#9-provider-assumptions--constraints) would work.
+> [§9](#9-provider-assumptions--constraints) would work. See
+> [Appendix B](#appendix-b--reference-implementation-notes) for how the prototype owns
+> and mutates that history.
 
 ---
 
@@ -437,7 +452,6 @@ Frame {
   parentFrameId : string | null
   isOffloaded   : bool
   fileReference : string | null   // path when offloaded
-  pinned        : bool            // true for the system frame; delete is guarded
   provenance    : OpRef[]         // operations that produced this frame state
 }
 
@@ -478,11 +492,10 @@ Session {
 
 - **Dual view** with a toggle: conversation view ⇄ frame view.
 - **Frame view = Git-style tree.** Nodes = frame states (title + summary, color-coded
-  by branch and/or frame type); edges = operations (labeled with op type). Click a
-  node → expand full text; right-click → operation menu; drag → create a branch.
-- **Pinned system frame** at the top of the tree (system prompt / tool definitions /
-  project instructions), visually distinct and operable like any frame — with `delete`
-  guarded.
+  by branch); edges = operations (labeled with op type). Click a node → expand full
+  text; right-click → operation menu; drag → create a branch.
+- **Preamble frame(s)** at the head of the tree (system prompt / tool definitions /
+  agent-injected context) — operable like any other frame, `delete` included.
 - **Frame details panel** — full text with inline edit, summary, linked tool calls,
   file reference if offloaded, and provenance.
 - **Operation/history panel** — the commit log with filtering and side-by-side diffs;
@@ -511,8 +524,13 @@ Session {
    model simply reading its file on demand ([§5.D](#5d-memory-operations)) — no bespoke
    fetch mechanism needed.
 6. The **system prompt is composable** by the harness (not a fixed opaque preamble), so
-   it can be represented and operated on as the pinned system frame
-   ([§2.7](#27-the-system-frame)).
+   it can be represented and operated on as a frame
+   ([§2.7](#27-everything-the-model-receives-is-a-frame)).
+7. The **complete rendered context can be observed and rewritten before each call** —
+   every block the model actually receives (system, tools, agent-injected content, and
+   the conversation), not just the transcript. This is what makes total control
+   ([§2.7](#27-everything-the-model-receives-is-a-frame)) achievable; see
+   [Appendix B](#appendix-b--reference-implementation-notes).
 
 **Caching / efficiency:**
 
@@ -557,10 +575,14 @@ Session {
 
 ## Appendix A — Glossary
 
-- **Frame** — addressable semantic unit of context (default: a user+assistant turn,
-  tool calls bundled).
-- **System frame** — the pinned frame holding the system prompt / tool definitions /
-  project instructions; operable (notably `compact`/`offload`) with `delete` guarded.
+- **Frame** — addressable unit of context (a conversation turn, or a chunk of the
+  preamble); all frames are uniform — there are **no frame types**.
+- **Preamble frame(s)** — frame(s) holding the non-conversational context (system prompt
+  / tool definitions / agent-injected memory); uniform with all other frames — no special
+  treatment.
+- **Rendered-context boundary** — the actual request sent to the model (system + tools +
+  injected blocks + turns); the layer where the complete context is observable and
+  rewritable (see [Appendix B](#appendix-b--reference-implementation-notes)).
 - **Operation** — a transformation on frames/branches; each mutating one is a commit.
 - **Compose** — assembling the concrete context payload sent to the model.
 - **Offload / Restore** — swap a frame for a reference to free window space / bring it
@@ -569,3 +591,76 @@ Session {
   branches or stays branch-local.
 - **Model-unaware principle** — the running model sees only the mutated context, never
   the operations.
+
+---
+
+## Appendix B — Reference implementation notes
+
+*Implementation detail, not design surface — specific to the prototype that wraps
+Claude Code (see [§3](#3-architecture-cli-first-ui-as-a-thin-wrapper)). A different
+backend meeting the [§9](#9-provider-assumptions--constraints) assumptions could realize
+these differently.*
+
+### Interception at the rendered-context boundary
+
+To control the *complete* realized context
+([§2.7](#27-everything-the-model-receives-is-a-frame)) — including blocks the agent
+injects downstream of the transcript — the prototype intercepts at the
+**rendered-context boundary**: the actual request sent to the model. A small local proxy
+(the agent is pointed at it via `ANTHROPIC_BASE_URL`) captures and rewrites each
+`/v1/messages` payload before forwarding it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CC as wrapped agent
+    participant PX as Context Composer<br/>(proxy at the boundary)
+    participant API as model API
+    CC->>PX: rendered request<br/>system + tools + injected msgs + turns
+    Note over PX: decompose into frames,<br/>apply operations (compose)
+    PX->>API: rewritten request
+    API-->>PX: response
+    PX-->>CC: response
+```
+
+**Spike-validated, both directions:**
+- *Observe* — a one-word prompt produced a **174 KB** request: 3 system blocks, **76 tool
+  definitions** (~164 KB), and a `messages` array with the user turn **plus an
+  agent-injected `system`-role message** absent from the transcript.
+- *Rewrite* — injecting a system override at the boundary ("begin reply with ZEPHYR")
+  changed the model's output to `ZEPHYR ping`; the mutated context reached the model.
+
+This is the *only* layer where everything the model sees is both visible and rewritable,
+regardless of source. The transcript sits one level too high to see agent-injected
+blocks:
+
+```mermaid
+flowchart TB
+    T["transcript .jsonl<br/>conversation turns only"]
+    R["rendered request<br/>system + tools + injected + turns"]
+    M["model"]
+    T -- "agent renders preamble &<br/>injects memory at send-time" --> R --> M
+    T -. "injected blocks invisible here" .-> R
+```
+
+**Caching caveat (sharp here).** The system + tool blocks (~164 KB above) sit at the
+*front* of the request and serve as cache prefix; rewriting them busts the cache for
+everything after. The [§9](#9-provider-assumptions--constraints) "keep the head stable,
+edit the tail" guidance is a hard rule at this layer.
+
+### Transcript layer (turn ↔ frame mapping)
+
+The agent builds each request from a JSONL session transcript; its structure informs how
+turns map to frames.
+- **Not one line per turn.** The transcript is a `uuid` / `parentUuid` linked list with
+  streaming partial fragments, empty assistant nodes, and housekeeping rows. Extraction
+  must collapse these into one logical frame per turn; structural ops (`delete` / `move`
+  / `combine`) must re-link the chain, not just drop list elements.
+- **Transcript rewrite + resume works** at this layer (spike-validated: editing a turn
+  changed the model's answer; deleting a re-linked turn removed it cleanly, model
+  unaware) — but `stream-json` stdin injection did not, and the rendered-context boundary
+  above is the more complete interception point.
+
+*Open question:* reconciling per-call boundary rewrites with the agent's own evolving
+transcript across turns — i.e., how fully Context Composer takes ownership of the
+outgoing `messages` array each turn.
