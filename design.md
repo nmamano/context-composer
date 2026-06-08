@@ -579,6 +579,182 @@ Session {
 
 ---
 
+## 11. Implementation Plan
+
+Tracer-bullet sequencing: each phase is the smallest end-to-end slice that produces
+observable behavior, smallest first — no horizontal layers (no "build all the ops, then
+build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux codebase
+(proxy/engine + CLI + React UI).
+
+### Decisions (open questions, answered with current leaning)
+
+- **Storage substrate → JSON-on-disk**, with deterministic *canonical* serialization
+  from birth (one serializer feeds both the cache story and the store). SQLite is
+  deferred to a later optimization only if history queries get annoying.
+- **Process model → long-lived proxy daemon** that holds the authoritative frame state,
+  exposing a small local control API the CLI calls. The CLI mutates the same live state
+  the proxy uses for the next request — it does **not** coordinate with the proxy through
+  disk alone.
+- **Multi-turn tool-loop validation → carried explicitly by Phase 1**, not deferred to a
+  separate spike (the boundary spike validated a single rewrite, not the full loop).
+- **Genuinely uncertain:** whether shared-vs-isolated *ripple* is needed for the demo.
+  The locked decision is *single-branch compose*, not full ripple — so ripple is split
+  out and gated (Phase 4b).
+
+### Phase 1 — Tracer bullet: prove the engine loop end-to-end
+
+- **Goal:** one rewritten request round-trips the full loop with a `delete` applied,
+  reconciliation working, and a byte-stable head.
+- **Vertical slice:** proxy daemon at the rendered-context boundary (`ANTHROPIC_BASE_URL`)
+  captures `/v1/messages` → decompose into preamble frame(s) + turn frames → reconcile the
+  incoming request against the authoritative in-memory frame state (match known frames,
+  append new ones) → CLI `list`/`show`/`delete` mutates that live state via the control
+  API → `compose` walks frame state → canonical serializer rewrites the body
+  (`cache_control` on the stable head) → forward → capture response as a new frame.
+- **Files/modules:** `proxy/` (http daemon + control API), `engine/decompose`,
+  `engine/reconcile`, `engine/compose`, `engine/serialize` (canonical), `engine/state`
+  (in-memory), `cli/` (`list`/`show`/`delete`/`compose` + control-API client). `compose`
+  exposes `--dump` (print the resolved payload) and `--hash-head` (print a hash of the
+  serialized stable head) so determinism is checkable, not eyeballed.
+- **Acceptance:**
+  - Point the wrapped agent at the proxy; one prompt yields a captured request and
+    `ctx list` shows preamble + turn frames.
+  - `ctx delete <frame>`; the next turn's rewritten request omits it and the model's
+    answer reflects the mutated context (model unaware).
+  - **Reconciliation:** a second user turn after the delete **plus at least one
+    tool_use/tool_result round-trip** — known frames are matched, new frames appended, the
+    deleted frame stays gone when recomposed.
+  - **Inspectable compose:** `ctx compose --dump` prints the exact payload the next send
+    will use (deletions omitted) — this is the inspection command later phases rely on, so
+    every "compose shows X" acceptance downstream is observable.
+  - **Determinism:** across two consecutive sends with no head change, `ctx compose
+    --hash-head` prints the **same hash** both times (byte-identical stable head) and the
+    dumped payload still carries the `cache_control` marker on that head.
+- **Risks/unknowns:** frame identity/reconciliation across turns is the crux of full
+  ownership; streaming responses are SSE passthrough; the tool-loop under full ownership
+  is the remaining load-bearing unknown this phase exists to de-risk.
+- **Size:** M (the load-bearing phase — budget accordingly).
+
+### Phase 2 — Versioning spine (narrow vertical slice)
+
+- **Goal:** every mutating op is a durable, inspectable, undoable commit — for the tracer
+  ops only.
+- **Vertical slice:** persist frame state + commit graph to JSON-on-disk (the canonical
+  form from Phase 1); record an implicit commit when a **user mutating op** (`delete`)
+  happens; wire `history` and `revert`. Frame **capture** of new turns is a *session-ingest
+  event* (the automatic `persist` of §5.D — written for resume), **not** a user commit, so
+  the §5/§7 operation enum stays intact and `history` shows only user operations.
+- **Files/modules:** `engine/store` (json-on-disk), `engine/commit-graph`,
+  `cli/` (`history`, `revert`), `engine/state` (durable-backed).
+- **Acceptance:** restart the proxy/CLI → `ctx list` shows the persisted frames →
+  `ctx delete` one → `ctx history` shows the implicit commit → `ctx revert` restores it →
+  the next rewritten request reflects the reverted state.
+- **Scope guard (anti-horizontal):** durable store + commit graph for the tracer ops
+  only — **no** generalized migrations, indexing, or query APIs.
+- **Risks/unknowns:** the commit model must be right early — provenance, undo semantics,
+  and the op-API shape all drift if commits arrive after op-breadth (§5 makes every
+  mutating op a commit by definition).
+- **Size:** M.
+
+### Phase 3 — Operation breadth (a sequence of vertical op slices)
+
+- **Goal:** grow the §5 toolkit, each op demoable end-to-end through proxy rewrite — not a
+  batch "all ops" drop.
+- **Vertical slices (land in order; each = a commit type + CLI verb + compose handling):**
+  - **3a** `edit`, `compact` — content authorship + frame-level compaction (high demo value).
+  - **3b** `offload`, `restore` — validates file-read retrieval (assumption 5); the live
+    token-reclamation beat.
+  - **3c** `combine`, `split`, `move`, `add` — structural reshaping.
+  - **3d** `strip`, `summarize`, `retitle` — sub-frame content ops.
+- **Files/modules:** `engine/ops/*` (one module per op), `cli/` (verbs),
+  `engine/compose` (per-op resolution), `engine/llm` (compact/summarize/title generation).
+- **Acceptance (per slice):** apply the op via CLI; `ctx compose --dump` shows the resolved
+  payload; the next send reflects it; `ctx history` records the commit. Concrete per-slice
+  checks (so "next send reflects it" is never ambiguous):
+  - `edit`/`compact`: `ctx edit <frame> --text ...` → `compose --dump` shows the
+    replacement text; `ctx compact <frame>` → `compose --dump` shows the summary in place
+    of the full text; head-hash unchanged when the frame is in the tail.
+  - `offload`: `ctx offload <frame>` → `compose --dump` shows the stub + file path (not the
+    full text) and the frame's token estimate drops; the wrapped agent reading that path
+    yields a new tool-result frame.
+  - `strip`/`summarize`/`retitle`: `ctx strip <frame> --result <id>` → `compose --dump`
+    shows that tool result gone while the turn's reasoning remains; `ctx summarize <frame>
+    --results` → the result is replaced by a shorter summary in the dump; `ctx retitle
+    <frame> --regen` → `ctx list` shows the new title/summary (composed payload unchanged).
+  - `combine`/`split`/`move`/`add`: `compose --dump` shows the new frame set/order.
+- **Scope guard (anti-horizontal):** each op is independently shippable/demoable; resist
+  landing them as one undifferentiated layer.
+- **Risks/unknowns:** LLM-backed ops (`compact`/`summarize`/`retitle`) need
+  deterministic-enough output to not gratuitously bust the cache; `offload` depends on the
+  agent's file-read tool + a reachable path.
+- **Size:** L (split across 3a–3d).
+
+### Phase 4 — Branching
+
+- **4a — basic branching (M).**
+  - **Goal:** fork / inspect / cherry-pick context across branches with single-branch
+    compose.
+  - **Vertical slice:** `branch`, `checkout`, `import` with **branch-local** frame states;
+    `compose` always walks one branch path to HEAD (the locked decision); `diff`/`status`
+    report active branch + HEAD.
+  - **Files/modules:** `engine/branch`, `engine/commit-graph` (multi-branch),
+    `cli/` (`branch`/`checkout`/`import`/`diff`/`status`), `engine/compose` (single-path walk).
+  - **Acceptance:** `ctx branch alt` from a frame → `ctx checkout alt` → mutate
+    independently → original branch unaffected → `ctx import <branch> <frame>` cherry-picks
+    a frame in as a commit → `compose` walks only the active branch.
+- **4b — shared-vs-isolated ripple (conditional, M).**
+  - **Goal:** an op on a shared-ancestor frame ripples forward to descendant branches.
+  - **Gate:** build **only if the demo needs it** — the locked decision is single-branch
+    compose, not full ripple semantics in the first branch slice.
+  - **Files/modules:** `engine/branch` (ripple propagation across descendants),
+    `engine/compose` (descendant re-resolution), `cli/` (`--shared`/`--isolated` flag on the
+    mutating ops).
+  - **Acceptance:** edit a shared-ancestor frame with `--shared` → the change appears when
+    composing **each** descendant branch; the same edit with `--isolated` (default) → only
+    the active branch changes, descendants compose unchanged.
+- **Risks/unknowns:** branching multiplies the state space; ripple is the hidden
+  complexity — deliberately split out and gated.
+- **Size:** 4a M, 4b M.
+
+### Phase 5 — Dual-view UI (thin wrapper)
+
+- **Goal:** conversation ⇄ frame-tree views, calling the *same* engine control API the CLI
+  does — no second operation client.
+- **Vertical slice:** React shell; conversation view (chat over `send`); frame view as a
+  hand-drawn **SVG git-tree** (nodes = frame states, edges = ops); details panel (full
+  text/summary/provenance/file ref); history panel (commit log + diff, click to
+  `checkout`/`revert`). The UI invokes the engine/control API only.
+- **Files/modules:** `ui/` (React app) over the existing control API; no new engine logic.
+- **Acceptance:** toggle conversation ⇄ frame view; right-click a frame → run an op → both
+  views update. **CLI parity is enforced mechanically:** every UI op dispatches through a
+  shared op registry / control-API route the CLI uses too (the proxy logs the route per UI
+  action); the UI surfaces **no** operation lacking a CLI verb — verifiable by diffing the
+  UI's op menu against the CLI verb list.
+- **Why here:** the tree view wants commits + branches to already exist; an earlier full
+  UI means rework. A thin conversation-only inspector (rendering `ctx list`/`show`) is
+  acceptable earlier if momentum demands it, but the real dual-view lands here.
+- **Risks/unknowns:** keeping React strictly a wrapper (no logic leak); SVG tree layout at
+  scale (graduate to Cytoscape/Vis only if the tree gets large).
+- **Size:** L.
+
+### Phase 6 — Demo polish + blog
+
+- **Goal:** three money shots scripted, plus a write-up.
+- **Vertical slice:** (1) delete a tangent → cleaner next turn; (2) live preamble token
+  reclamation — `offload`/`compact` the ~164 KB tool+system head, token count visibly
+  drops; (3) branch to explore + `import` the best frame back. Polish, scripted
+  walkthrough, blog post. *Note:* shot (2) **deliberately mutates the stable head** and
+  pays the one-time cache-bust cost to show control/token reclamation — call this out in
+  the write-up so it doesn't read as a violation of the "keep the head stable" caching
+  guidance (§9); it's the exception that demonstrates the rule.
+- **Files/modules:** `demo/` (scripts/fixtures), `blog/` (write-up), minor UI polish.
+- **Acceptance:** each money shot runs start-to-finish in the UI; the blog draft explains
+  the paradigm and the provider-efficiency framing from §9.
+- **Risks/unknowns:** demo determinism under LLM variability — pin prompts/fixtures.
+- **Size:** S/M.
+
+---
+
 ## Appendix A — Glossary
 
 - **Frame** — addressable unit of context (a conversation turn, or a chunk of the
