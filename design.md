@@ -631,8 +631,11 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
     --hash-head` prints the **same hash** both times (byte-identical stable head) and the
     dumped payload still carries the `cache_control` marker on that head.
 - **Risks/unknowns:** frame identity/reconciliation across turns is the crux of full
-  ownership; streaming responses are SSE passthrough; the tool-loop under full ownership
-  is the remaining load-bearing unknown this phase exists to de-risk.
+  ownership (the general mechanism — source identity vs. representation — is
+  [Appendix C](#appendix-c--reconciliation-across-operations); Phase 1 builds its
+  single-source/full-or-deleted special case); streaming responses are SSE passthrough;
+  the tool-loop under full ownership is the remaining load-bearing unknown this phase
+  exists to de-risk.
 - **Size:** M (the load-bearing phase — budget accordingly).
 
 ### Phase 2 — Versioning spine (narrow vertical slice)
@@ -653,7 +656,9 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   only — **no** generalized migrations, indexing, or query APIs.
 - **Risks/unknowns:** the commit model must be right early — provenance, undo semantics,
   and the op-API shape all drift if commits arrive after op-breadth (§5 makes every
-  mutating op a commit by definition).
+  mutating op a commit by definition). This phase persists the **source-identity index**
+  that reconciliation depends on — see
+  [Appendix C](#appendix-c--reconciliation-across-operations).
 - **Size:** M.
 
 ### Phase 3 — Operation breadth (a sequence of vertical op slices)
@@ -792,6 +797,14 @@ injects downstream of the transcript — the prototype intercepts at the
 (the agent is pointed at it via `ANTHROPIC_BASE_URL`) captures and rewrites each
 `/v1/messages` payload before forwarding it.
 
+**Credentials: subscription auth, never API keys.** The wrapped Claude Code authenticates
+with the user's existing **subscription session** (already signed in as the Linux user
+running the office); the prototype never uses, stores, or injects an `ANTHROPIC_API_KEY`.
+The proxy is **credential-agnostic** — it forwards whatever auth headers the agent already
+attaches (the OAuth bearer, `anthropic-beta`, etc.) straight through to the upstream,
+unread and unmodified, stripping only hop-by-hop headers. The *only* wiring the live setup
+needs is `ANTHROPIC_BASE_URL` pointed at the proxy; auth rides along untouched.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -848,4 +861,134 @@ request body with the array composed from its own frame state — it does not pa
 the agent assembled. The wrapped agent is reduced to a model-runner + tool-executor, and
 its own evolving transcript is irrelevant (overwritten every turn); this is what makes
 total control hold. Owning the exact request bytes carries two cache duties — see the
-caching note in [§9](#9-provider-assumptions--constraints).
+caching note in [§9](#9-provider-assumptions--constraints). Mapping the agent's resend
+onto that owned state across *every* operation — not just `delete` — is the job of
+[Appendix C](#appendix-c--reconciliation-across-operations).
+
+---
+
+## Appendix C — Reconciliation across operations
+
+*How the agent's resend is mapped onto frame state — the mechanism that keeps **every**
+operation robust, not just `delete`. Provider-agnostic in principle, but it arises
+directly from the full-ownership boundary model in
+[Appendix B](#appendix-b--reference-implementation-notes).*
+
+### The problem
+
+The model API is **stateless**: the wrapped agent resends its entire conversation on every
+call. The agent is **[model-unaware](#26-the-model-is-unaware-key-principle)** — it never
+learns about our operations — so it always resends the **original** content, while our
+frame state has diverged from it (frames deleted, edited, reordered, merged…).
+
+Each incoming request must therefore be reconciled against authoritative frame state to:
+
+1. **detect genuinely-new content** the agent contributes — a new user turn, tool
+   results — and ingest it; and
+2. **prevent the resend from undoing or duplicating** our operations — the resent copy of
+   a deleted frame must not reappear; the resent original of an edited frame must not
+   overwrite the edit.
+
+A **positional diff** ("take everything past message N") cannot do this: `delete` makes the
+agent's history *longer* than ours, `move` reorders it, `combine` / `split` change its
+cardinality. Positions desync the moment any structural op is applied.
+
+### The mechanism: source identity vs. representation
+
+Separate two things every frame carries:
+
+- **Source identity** *(immutable)* — the fingerprint(s) of the **original agent
+  message(s)** the frame was derived from. This is how we recognize the resend. It is
+  **content-derived** (a hash of role + normalized content) because we cannot inject an
+  echo marker the agent would carry back without the **model** seeing it — that would
+  violate the [model-unaware principle](#26-the-model-is-unaware-key-principle).
+- **Representation** *(mutable, owned by us)* — what
+  [`compose`](#5f-composition--runtime) emits for that frame: edited text, a summary, an
+  offload stub, the original — or **nothing**, if deleted.
+
+The load-bearing invariant: **because the agent is unaware of every operation, the source
+content it resends never changes.** So if each frame remembers its source identity
+permanently, we can always recognize the resend and map it onto whatever we turned the
+frame into — regardless of how the representation or structure was mutated.
+
+Reconciliation is therefore a **map lookup on source identity** (order-independent), not a
+positional diff:
+
+```
+for each message M in the incoming request:
+    key = fingerprint(M)
+    if key ∈ sourceIndex:     # known → our representation is authoritative
+        mark the mapped frame(s) seen; do NOT append
+    else:                     # unknown → genuinely-new content
+        ingest M as a new frame (at the tail); index its source
+
+compose() then emits OUR frame order and OUR representation — never the resend.
+```
+
+### How each operation falls out
+
+| Op | What the agent resends | Mapping |
+|---|---|---|
+| `delete` | the original content | source → **tombstone** → omitted from compose |
+| `edit` / `compact` / `summarize` / `offload` | the **pre-op original** | source → frame; emit **our** representation, ignore the resent original |
+| `move` | the original order | lookup is order-independent; compose emits **our** order |
+| `combine` | the parts, separately | **many** sources → **one** frame (emit once, at the first part's slot) |
+| `split` | the original, as one message | **one** source → **many** frames |
+| `add` | *nothing* (it never originated in the agent) | a frame with **no** source; always emitted, never expected in the resend |
+| `import` | *nothing* (sourced from another branch/session) | like `add`: no agent source; carries its origin frame's identity as provenance |
+
+Because `combine` is many-to-one and `split` is one-to-many, the source index is a
+**many-to-many map** (`sourceFingerprint → ordered list of (frame, sub-range)`), not a
+simple dictionary.
+
+### The refresh-gating rule (subtle, load-bearing)
+
+A live frame may legitimately **grow** between turns — an assistant reply, then a tool-loop
+continuation — and we *want* to absorb that growth from the resend. But an
+edited/compacted/offloaded frame must **not** be refreshed from the resend, or the agent's
+pre-op original would clobber our representation. The rule:
+
+> On a source-identity match, **refresh content from the resend only if the frame has no
+> representation override.** Frames carrying a content-mutation commit keep their
+> representation; un-mutated frames absorb the resend.
+
+`delete` is the simplest case of this — a tombstone is just a representation override that
+emits nothing.
+
+### Stability conditions & known limits
+
+- **Normalize provider cache hints out of identity (load-bearing).** `cache_control` is a
+  non-semantic caching hint the agent attaches to head/message blocks and *relocates*
+  between turns. It must be stripped before **both** (a) fingerprinting — otherwise the
+  same message resent with the marker moved hashes differently, reconciliation misses, and
+  a deleted frame silently leaks back in as "new" — and (b) re-serialization, where the
+  composer owns the single outgoing breakpoint (and an inherited marker can violate
+  Anthropic's TTL-ordering rule). *Verified against real Claude Code: without this
+  normalization, model-unaware delete silently fails end-to-end while passing a
+  byte-identical stub.* One narrow strip (the field is the provider's, not semantic)
+  serves both paths.
+- **Seal the agent's self-mutation.** If the agent runs its *own* compaction / auto-memory
+  it could rewrite its history, drifting the source content out from under us. Running the
+  agent sealed (`--bare`-style, disabling auto-injectors) keeps source identities stable.
+  Any block the agent still injects is captured at the boundary as a frame
+  ([§2.7](#27-everything-the-model-receives-is-a-frame)).
+- **Duplicate-identical sources.** Two byte-identical source messages collide on
+  fingerprint and are disambiguated only by **occurrence order** within the resend. This is
+  an accepted limitation: an operation on one of an identical pair may bind to the wrong
+  occurrence.
+
+### Relationship to the implementation plan
+
+The mechanism is built up across phases, not all at once:
+
+- **[Phase 1](#phase-1--tracer-bullet-prove-the-engine-loop-end-to-end)** implements the
+  **special case**: single source → single frame, representation = full-or-deleted (greedy
+  ordered match with tombstones).
+- **[Phase 2](#phase-2--versioning-spine-narrow-vertical-slice)** makes source identity
+  **durable and first-class** — the `provenance` field of [§7](#7-data-model) becomes the
+  persisted source index. (This is *why* versioning precedes op-breadth: the identity /
+  commit model must be right before many ops depend on it.)
+- **[Phase 3](#phase-3--operation-breadth-a-sequence-of-vertical-op-slices)** introduces
+  **representation overrides** (`edit` / `compact` / `offload`) and the **refresh-gating**
+  rule above; the structural ops (`combine` / `split` / `move`) generalize the index to
+  many-to-many.
