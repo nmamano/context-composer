@@ -54,8 +54,22 @@ export interface Frame {
 
   /** Tombstone. A deleted frame stays authoritative: reconcile matches it so the
    *  unaware agent's resend of the same content does NOT re-add it, and compose
-   *  omits it. Recoverable later via Phase 2 `revert`. */
+   *  omits it. Recoverable via `revert` (Phase 2). */
   deleted: boolean;
+
+  /** Operation lineage (Phase 2): the ordered ids of the commits that produced this
+   *  frame's current REPRESENTATION (e.g. ["c1"] after a delete, ["c1","c2"] after a
+   *  revert). This is NOT the reconciliation source-identity index — that is anchorFp +
+   *  occurrence above. Persisted so undo/audit survive restart; the general
+   *  representation-override gate that reads it arrives in Phase 3 with edit/compact. */
+  provenance: string[];
+
+  /** The id of the `capture` event that first created this frame (Appendix C). Gives the
+   *  frame a chronological origin in the timeline WITHOUT being a representation override
+   *  — capture is source material arriving, not an operation, so it stays out of
+   *  `provenance` and out of the refresh-gate. Null only in the transient window before
+   *  its creating event is recorded. */
+  createdEventId: string | null;
 
   // Internal sequence numbers (NOT serialized into the request — kept off the wire
   // so they never perturb the deterministic byte stream).

@@ -39,7 +39,12 @@ wait_ready() { # poll until the control API answers
 scenario() { # $1 = label, $2 = do_delete(yes/no), $3 = port ; sets SECRET_PRESENT
   local label="$1" do_delete="$2"
   PORT="$3"
-  CC_PROXY_PORT="$PORT" bun "$ROOT/src/proxy/server.ts" >"/tmp/cc_e2e_proxy_$PORT.log" 2>&1 &
+  # Phase 2: the proxy is now durable-backed. Give each scenario its OWN fresh store so
+  # A's secret can't persist into B — A/B stays independent (and restart-reload, which
+  # the acceptance relies on, is unaffected: that's the SAME path across a restart).
+  local STORE="$WORK/store-$PORT.json"
+  rm -f "$STORE"
+  CC_PROXY_PORT="$PORT" CC_STORE_PATH="$STORE" bun "$ROOT/src/proxy/server.ts" >"/tmp/cc_e2e_proxy_$PORT.log" 2>&1 &
   local PROXY_PID=$!
   if ! wait_ready; then
     echo "── Scenario $label: PROXY FAILED TO START on $PORT"; sed -n '1,6p' "/tmp/cc_e2e_proxy_$PORT.log"

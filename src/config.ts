@@ -13,3 +13,8 @@ export const CONTROL_BASE_URL =
 // Anthropic API; tests point this at a local stub upstream.
 export const UPSTREAM_BASE_URL =
   process.env.CC_UPSTREAM_URL ?? "https://api.anthropic.com";
+
+// Durable store path for the proxy daemon (Phase 2). A restart reloads this file's
+// frame state + commit graph. Tests/library callers pass their own path (or none, for
+// in-memory) — this default applies only to the daemon entrypoint.
+export const STORE_PATH = process.env.CC_STORE_PATH ?? "./.ctx-store.json";

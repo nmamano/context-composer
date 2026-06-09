@@ -1,3 +1,7 @@
 node_modules/
 *.log
 .DS_Store
+
+# Phase 2 durable store (daemon default + per-scenario stores) and atomic-write temps
+.ctx-store*.json
+.*.tmp-*

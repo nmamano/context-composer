@@ -7,8 +7,11 @@
 // exact state the proxy composes from on the next request (locked decision — no
 // disk-only coordination).
 
-import { PROXY_PORT } from "../config.ts";
+import { PROXY_PORT, STORE_PATH } from "../config.ts";
 import { FrameStore } from "../engine/state.ts";
+import { JsonFileStore } from "../engine/store.ts";
+import type { Commit } from "../engine/commit-graph.ts";
+import type { ContextEvent } from "../engine/event-log.ts";
 import { forward } from "./forward.ts";
 
 export interface ProxyHandle {
@@ -24,11 +27,42 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+/** The public op-log shape exposed over the control API: the §7 commit fields, minus the
+ *  internal `seq` logical clock (bookkeeping, not part of the user-facing record). */
+function publicCommit(c: Commit) {
+  return {
+    id: c.id,
+    type: c.type,
+    affectedFrameIds: c.affectedFrameIds,
+    params: c.params,
+    note: c.note,
+    branchId: c.branchId,
+    parentCommitId: c.parentCommitId,
+    timestamp: c.timestamp,
+  };
+}
+
+/** The public timeline-event shape, minus the internal `seq`. */
+function publicEvent(e: ContextEvent) {
+  return {
+    id: e.id,
+    type: e.type,
+    frameIds: e.frameIds,
+    commitId: e.commitId,
+    timestamp: e.timestamp,
+  };
+}
+
 export function startProxy(opts: {
   port?: number;
   upstreamBaseUrl?: string;
+  /** Path to the durable JSON store. Omit for pure in-memory state (the Phase 1
+   *  behavior the tests rely on); the daemon entrypoint passes a real path. */
+  storePath?: string;
 } = {}): ProxyHandle {
-  const store = new FrameStore();
+  const store = new FrameStore(
+    opts.storePath ? new JsonFileStore(opts.storePath) : null,
+  );
   // Tracks the in-flight response capture so control reads observe a consistent
   // state (e.g. `ctx list` right after a send reflects the captured assistant).
   let lastCapture: Promise<void> = Promise.resolve();
@@ -48,11 +82,19 @@ export function startProxy(opts: {
     // real queue — out of scope for Phase 1's single wrapped agent.
     await lastCapture;
 
-    store.ingest(body);
-    const composed = store.compose();
-    // Bind the capture to the frame open RIGHT NOW (explicit target), not to
-    // whatever is last when the capture promise later resolves.
-    const targetId = store.openFrameId();
+    let composed;
+    let targetId;
+    try {
+      store.ingest(body); // also persists (session-ingest); may throw on a disk failure
+      composed = store.compose();
+      // Bind the capture to the frame open RIGHT NOW (explicit target), not to
+      // whatever is last when the capture promise later resolves.
+      targetId = store.openFrameId();
+    } catch (err) {
+      // A persistence failure leaves in-memory state intact but unsaved. Surface it
+      // cleanly rather than as a raw 500 with a stack trace.
+      return json({ error: "failed to ingest/persist request", detail: String(err) }, 500);
+    }
 
     let forwarded;
     try {
@@ -80,6 +122,7 @@ export function startProxy(opts: {
     await lastCapture; // observe any just-finished capture
     const path = url.pathname;
 
+    try {
     if (path === "/control/list") return json({ frames: store.list() });
 
     if (path === "/control/show") {
@@ -110,7 +153,30 @@ export function startProxy(opts: {
       return json(out);
     }
 
+    if (path === "/control/history") {
+      return json({ commits: store.history().map(publicCommit) });
+    }
+
+    if (path === "/control/timeline") {
+      return json({ events: store.timeline().map(publicEvent) });
+    }
+
+    if (path === "/control/revert" && req.method === "POST") {
+      const parsed = (await req.json().catch(() => null)) as
+        | { commit?: string }
+        | null;
+      const result = store.revert(parsed?.commit);
+      return result.ok
+        ? json({ reverted: publicCommit(result.commit) })
+        : json({ error: result.error }, 400);
+    }
+
     return json({ error: `unknown control route ${path}` }, 404);
+    } catch (err) {
+      // A mutating control op (delete/revert) failed to persist. In-memory state is
+      // intact but unsaved; report it cleanly instead of as a raw 500.
+      return json({ error: "control operation failed", detail: String(err) }, 500);
+    }
   }
 
   const server = Bun.serve({
@@ -136,11 +202,14 @@ export function startProxy(opts: {
 }
 
 // Run as a daemon when invoked directly: `bun run src/proxy/server.ts`.
+// The daemon persists to CC_STORE_PATH (default ./.ctx-store.json) so a restart resumes
+// the frame state + commit graph.
 if (import.meta.main) {
-  const handle = startProxy();
+  const handle = startProxy({ storePath: STORE_PATH });
   console.error(
     `[context-composer] proxy + control API on http://localhost:${handle.port}\n` +
       `  point the wrapped agent at it:  ANTHROPIC_BASE_URL=http://localhost:${handle.port}\n` +
+      `  durable store:                  ${STORE_PATH}\n` +
       `  drive frames with:              bun run src/cli/ctx.ts list`,
   );
 }

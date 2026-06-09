@@ -7,6 +7,9 @@
 //   bun run src/cli/ctx.ts delete t1 t2
 //   bun run src/cli/ctx.ts compose --dump
 //   bun run src/cli/ctx.ts compose --hash-head
+//   bun run src/cli/ctx.ts history             (commit log — what you DID to the context)
+//   bun run src/cli/ctx.ts timeline            (full audit log — incl. captures)
+//   bun run src/cli/ctx.ts revert [<commit>]   (Phase 2 versioning verbs)
 
 import { CONTROL_BASE_URL } from "../config.ts";
 
@@ -83,6 +86,60 @@ async function cmdCompose(args: string[]): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function cmdHistory(_args: string[]): Promise<void> {
+  const { commits } = (await get("/control/history")) as {
+    commits: Array<{
+      id: string;
+      type: string;
+      affectedFrameIds: string[];
+      note: string | null;
+      timestamp: string;
+    }>;
+  };
+  if (commits.length === 0) {
+    console.log("(no commits yet)");
+    return;
+  }
+  for (const c of commits) {
+    console.log(
+      `${c.id.padEnd(4)} ${c.type.padEnd(7)} ${c.affectedFrameIds.join(",").padEnd(10)}  ${c.note ?? ""}  ${c.timestamp}`,
+    );
+  }
+}
+
+async function cmdTimeline(_args: string[]): Promise<void> {
+  const { events } = (await get("/control/timeline")) as {
+    events: Array<{
+      id: string;
+      type: string;
+      frameIds: string[];
+      commitId: string | null;
+      timestamp: string;
+    }>;
+  };
+  if (events.length === 0) {
+    console.log("(no events yet)");
+    return;
+  }
+  for (const e of events) {
+    const commit = e.commitId ? ` (${e.commitId})` : "";
+    console.log(
+      `${e.id.padEnd(4)} ${e.type.padEnd(8)} ${e.frameIds.join(",").padEnd(10)}${commit}  ${e.timestamp}`,
+    );
+  }
+}
+
+async function cmdRevert(args: string[]): Promise<void> {
+  const commit = args.find((a) => !a.startsWith("-")); // optional; defaults to HEAD
+  const result = (await post("/control/revert", commit ? { commit } : {})) as {
+    reverted?: { id: string; params: { revertedCommitId?: string } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  const r = result.reverted!;
+  console.log(`reverted ${r.params.revertedCommitId} (new commit ${r.id})`);
+}
+
 async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
   switch (cmd) {
@@ -94,9 +151,15 @@ async function main(): Promise<void> {
       return cmdDelete(args);
     case "compose":
       return cmdCompose(args);
+    case "history":
+      return cmdHistory(args);
+    case "timeline":
+      return cmdTimeline(args);
+    case "revert":
+      return cmdRevert(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head]`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] | history | timeline | revert [<commit>]`,
       );
   }
 }
