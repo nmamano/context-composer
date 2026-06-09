@@ -1,0 +1,17 @@
+{
+  "name": "context-composer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Context Composer — Phase 1 tracer bullet: rendered-context-boundary proxy + frame engine + ctx CLI",
+  "scripts": {
+    "proxy": "bun run src/proxy/server.ts",
+    "ctx": "bun run src/cli/ctx.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "demo": "bun run scripts/phase1-walkthrough.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
