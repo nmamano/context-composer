@@ -362,9 +362,11 @@ re-enters the conversation as a normal **file-read tool-result frame** — itsel
 manageable frame you can re-`offload`/`compact`.
 
 **`persist` (automatic, not a user command)** — Every frame is written to durable
-storage on creation, so a user can close the tab and resume later. This underpins
-both session resume and the offload/restore mechanism (offload is cheap precisely
-because the data is already saved).
+storage on creation (and recorded as a `capture` event in the [timeline](#7-data-model)),
+so a user can close the tab and resume later. This underpins both session resume and the
+offload/restore mechanism (offload is cheap precisely because the data is already saved).
+Capture persists and is auditable, but it is **not** a commit — it doesn't enter the
+revertible `history`.
 
 ---
 
@@ -372,7 +374,12 @@ because the data is already saved).
 
 **`commit` (implicit)** — Every mutating operation records a commit
 `{ id, type, affectedFrameIds, params, timestamp, note }`. There is no separate manual
-commit step in the default flow; the operation *is* the commit.
+commit step in the default flow; the operation *is* the commit. Separately, **every** store
+mutation — operations **and** raw turn capture — appends a `ContextEvent` to the complete
+audit **timeline** ([§7](#7-data-model)). Two read surfaces fall out: **`history`** = the
+commit log (what *you* did to the context; revertible/branchable), and **`timeline`** = the
+full ordered record including captures. Capture is a timeline event only — never a commit
+(see [Appendix C](#appendix-c--reconciliation-across-operations)).
 
 **`branch <name> [--from <frame|commit>]`** — Fork a new branch from any frame or
 commit. Use cases: explore an alternative direction while keeping the original intact;
@@ -452,10 +459,20 @@ Frame {
   parentFrameId : string | null
   isOffloaded   : bool
   fileReference : string | null   // path when offloaded
-  provenance    : OpRef[]         // operations that produced this frame state
+  provenance    : OpRef[]         // operations that produced this frame's representation
+  createdEventId : string | null  // the capture event that first created this frame
+                                  // (timeline origin; NOT a representation override — Appendix C)
 }
 
-Operation /* = Commit */ {
+ContextEvent /* the complete, append-only audit timeline */ {
+  id        : string
+  type      : "capture" | <operation type>   // EVERY store mutation; captures included
+  frameIds  : string[]                        // frames created / affected
+  commitId  : string | null                   // set iff this event also produced a Commit
+  timestamp : timestamp
+}
+
+Operation /* = Commit (the revertible subset of events) */ {
   id              : string
   type            : "add" | "delete" | "combine" | "split" | "move" |
                     "import" | "edit" | "compact" | "strip" | "summarize" |
@@ -468,6 +485,13 @@ Operation /* = Commit */ {
   branchId        : string
   parentCommitId  : string | null
 }
+// Event vs Commit (see Appendix C). An **Event** records that *something happened to the
+// context store* — raw turn capture (source material arriving) AND every user operation.
+// A **Commit** is the *intentional, representation-changing* subset, carrying version-
+// control semantics (revert / branch / checkout). The commit graph is a projection over
+// the event log: `timeline` reads events; `history` reads commits. Raw capture is an event
+// only — never a commit, and never enters `Frame.provenance` (it is not a representation
+// override, so refresh-gating still keys on representation, not on existence).
 
 Branch {
   id            : string
@@ -641,23 +665,29 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
 ### Phase 2 — Versioning spine (narrow vertical slice)
 
 - **Goal:** every mutating op is a durable, inspectable, undoable commit — for the tracer
-  ops only.
-- **Vertical slice:** persist frame state + commit graph to JSON-on-disk (the canonical
-  form from Phase 1); record an implicit commit when a **user mutating op** (`delete`)
-  happens; wire `history` and `revert`. Frame **capture** of new turns is a *session-ingest
-  event* (the automatic `persist` of §5.D — written for resume), **not** a user commit, so
-  the §5/§7 operation enum stays intact and `history` shows only user operations.
-- **Files/modules:** `engine/store` (json-on-disk), `engine/commit-graph`,
-  `cli/` (`history`, `revert`), `engine/state` (durable-backed).
+  ops only — recorded on a complete audit timeline.
+- **Vertical slice:** persist frame state + **event log** + commit graph to JSON-on-disk
+  (the canonical form from Phase 1); record an implicit commit when a **user mutating op**
+  (`delete`) happens; wire `history`, `timeline`, and `revert`. Frame **capture** of new
+  turns appends a `capture` **event** (the automatic `persist` of §5.D — written for resume
+  and visible on the timeline), but is **not** a commit — so the §5/§7 *commit* enum stays
+  intact and `history` shows only user operations while `timeline` shows the full
+  chronology (captures included). The commit graph is the revertible projection over the
+  event log; a `delete`/`revert` event carries the `commitId` it produced.
+- **Files/modules:** `engine/store` (json-on-disk), `engine/event-log`,
+  `engine/commit-graph`, `cli/` (`history`, `timeline`, `revert`),
+  `engine/state` (durable-backed).
 - **Acceptance:** restart the proxy/CLI → `ctx list` shows the persisted frames →
-  `ctx delete` one → `ctx history` shows the implicit commit → `ctx revert` restores it →
-  the next rewritten request reflects the reverted state.
-- **Scope guard (anti-horizontal):** durable store + commit graph for the tracer ops
-  only — **no** generalized migrations, indexing, or query APIs.
-- **Risks/unknowns:** the commit model must be right early — provenance, undo semantics,
-  and the op-API shape all drift if commits arrive after op-breadth (§5 makes every
-  mutating op a commit by definition). This phase persists the **source-identity index**
-  that reconciliation depends on — see
+  `ctx delete` one → `ctx history` shows the implicit commit (and `ctx timeline` shows
+  capture + delete) → `ctx revert` restores it → the next rewritten request reflects the
+  reverted state.
+- **Scope guard (anti-horizontal):** durable store + event log + commit graph for the
+  tracer ops only — **no** generalized migrations, indexing, or query APIs.
+- **Risks/unknowns:** the commit/event model must be right early — provenance, undo
+  semantics, and the op-API shape all drift if commits arrive after op-breadth (§5 makes
+  every mutating op a commit by definition). This phase persists the source identity
+  (`anchorFp` + `occurrence`) that reconciliation depends on, plus each frame's
+  `createdEventId` origin — distinct from provenance; see
   [Appendix C](#appendix-c--reconciliation-across-operations).
 - **Size:** M.
 
@@ -767,15 +797,68 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
 - **Preamble frame(s)** — frame(s) holding the non-conversational context (system prompt
   / tool definitions / agent-injected memory); uniform with all other frames — no special
   treatment.
+- **Wrapped agent** — the AI agent whose traffic we sit in front of. It is
+  [model-unaware](#26-the-model-is-unaware-key-principle): it keeps resending its
+  original full transcript every turn, oblivious to our operations.
 - **Rendered-context boundary** — the actual request sent to the model (system + tools +
   injected blocks + turns); the layer where the complete context is observable and
   rewritable (see [Appendix B](#appendix-b--reference-implementation-notes)).
+- **Decompose** — carve an intercepted request into frames (a preamble frame + one turn
+  frame per turn). The inverse of compose.
+- **Compose** — assembling the concrete context payload sent to the model: walk our
+  frames in order, omit deletions, apply each frame's representation.
+- **Reconciliation** — mapping the wrapped agent's resent transcript onto our
+  authoritative frame state each turn: match frames we already know, ingest genuinely-new
+  content, and stop the resend from undoing our operations (see
+  [Appendix C](#appendix-c--reconciliation-across-operations)).
+- **Source identity** — *how a resent frame is recognized:* the content **fingerprint** of
+  its opening message (`anchorFp`) plus its `occurrence` among frames sharing that
+  fingerprint. Immutable — the unaware agent always resends the same original content.
+- **Fingerprint** — a content-derived hash (role + normalized content) used as source
+  identity. Provider cache hints (`cache_control`) are normalized out first.
+- **Representation** — *what compose emits for a frame:* the original, an edited version, a
+  summary, an offload stub — or **nothing**, if deleted. Source identity is fixed;
+  representation is ours to change. Keeping the two separate is what makes every operation
+  robust against the resend.
+- **Tombstone** — a deleted frame, kept (not removed) and flagged deleted. Reconciliation
+  still matches the agent's resend to it and the tombstone wins — content ignored, frame
+  omitted from compose — so the deletion can't silently undo itself.
+- **Refresh-gating** — on a source-identity match, refresh a frame's content from the
+  resend **only if it carries no representation override**; an overridden frame (today: a
+  tombstone) keeps our representation instead of absorbing the resent original.
 - **Operation** — a transformation on frames/branches; each mutating one is a commit.
-- **Compose** — assembling the concrete context payload sent to the model.
+- **Event / timeline** — the complete, append-only, ordered record of *everything that
+  happened to the context store* — turn **captures** and user operations alike. Read with
+  `ctx timeline`. The audit surface; events are non-revertible by default.
+- **Capture event** — a timeline event marking new context arriving (a user turn, an
+  assistant reply). It is *source material entering the stream*, not an operation — so it is
+  an event but **never** a commit, and never enters a frame's provenance.
+- **Commit / commit graph** — a recorded mutating *operation*
+  `{id, type, affectedFrameIds, params, parentCommitId, timestamp}`; the operation *is* the
+  commit. Commits are the **revertible/branchable subset** of events (the version-control
+  projection over the timeline), forming an append-only graph (a single linear `main` branch
+  until branching) with **head** at the latest. Read with `ctx history`.
+- **Provenance / lineage** — the ordered commit ids that produced a frame's current
+  *representation* (audit trail). Distinct from both source identity (*how we recognize* a
+  frame on the resend) and `createdEventId` (the *timeline origin* of its existence).
+- **Revert** — undo a commit by appending a new inverse commit (history is never
+  rewritten); for a delete, this lifts the tombstone.
 - **Offload / Restore** — swap a frame for a reference to free window space / bring it
   back.
 - **Shared vs isolated** — whether an operation on a frame ripples to descendant
   branches or stays branch-local.
+- **`cache_control`** — the provider's caching hint, attached to head/message blocks and
+  relocated between turns. Non-semantic, so it is normalized out of both fingerprinting and
+  serialization (see [§9](#9-provider-assumptions--constraints) / Appendix C).
+- **Stable head / cache breakpoint** — the cacheable request prefix (tools + system). We
+  strip every inherited `cache_control` and place exactly one breakpoint we own on the
+  head's last block, so the large head is cache-read rather than reprocessed each turn.
+- **Canonical serialization** — one deterministic serializer (recursively sorted keys,
+  preserved array order) so identical logical content yields identical bytes every turn —
+  avoiding accidental cache busts. The same serializer backs the durable store.
+- **Durable store** — the whole authoritative state (frames + commit graph + counters)
+  written to one JSON file via the canonical serializer, atomically (temp → fsync →
+  rename); a restart reloads it.
 - **Model-unaware principle** — the running model sees only the mutated context, never
   the operations.
 
@@ -935,7 +1018,7 @@ compose() then emits OUR frame order and OUR representation — never the resend
 | `combine` | the parts, separately | **many** sources → **one** frame (emit once, at the first part's slot) |
 | `split` | the original, as one message | **one** source → **many** frames |
 | `add` | *nothing* (it never originated in the agent) | a frame with **no** source; always emitted, never expected in the resend |
-| `import` | *nothing* (sourced from another branch/session) | like `add`: no agent source; carries its origin frame's identity as provenance |
+| `import` | *nothing* (sourced from another branch/session) | like `add`: no agent source; carries its origin frame as a **source reference** (origin metadata), distinct from `provenance` (operation lineage) |
 
 Because `combine` is many-to-one and `split` is one-to-many, the source index is a
 **many-to-many map** (`sourceFingerprint → ordered list of (frame, sub-range)`), not a
@@ -985,9 +1068,14 @@ The mechanism is built up across phases, not all at once:
   **special case**: single source → single frame, representation = full-or-deleted (greedy
   ordered match with tombstones).
 - **[Phase 2](#phase-2--versioning-spine-narrow-vertical-slice)** makes source identity
-  **durable and first-class** — the `provenance` field of [§7](#7-data-model) becomes the
-  persisted source index. (This is *why* versioning precedes op-breadth: the identity /
-  commit model must be right before many ops depend on it.)
+  **durable and first-class** — `anchorFp` + `occurrence` (plus the ordered frame list and
+  tombstones) persist as the reconciliation index. Note the deliberate three-way split:
+  **source identity** (how we recognize a resend) is *not* **provenance** (the commit
+  lineage that produced a frame's representation) and is *not* `createdEventId` (the
+  timeline origin of a frame's existence). Capture establishes identity + a `createdEventId`
+  but never a representation override, so refresh-gating still keys on representation. (This
+  is *why* versioning precedes op-breadth: the identity / commit / event model must be right
+  before many ops depend on it.)
 - **[Phase 3](#phase-3--operation-breadth-a-sequence-of-vertical-op-slices)** introduces
   **representation overrides** (`edit` / `compact` / `offload`) and the **refresh-gating**
   rule above; the structural ops (`combine` / `split` / `move`) generalize the index to
