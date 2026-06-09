@@ -2,6 +2,8 @@
 // control API the CLI drives. One Bun.serve, routed by path:
 //   POST /v1/messages   → intercept: ingest → compose → forward → capture
 //   /control/*          → list / show / delete / compose for the `ctx` CLI
+//   (anything else)     → transparent passthrough to the real upstream (design.md §11,
+//                         Phase 2.5): a dumb pipe that bypasses the engine entirely
 //
 // Both surfaces share ONE in-memory FrameStore in this process: the CLI mutates the
 // exact state the proxy composes from on the next request (locked decision — no
@@ -12,7 +14,7 @@ import { FrameStore } from "../engine/state.ts";
 import { JsonFileStore } from "../engine/store.ts";
 import type { Commit } from "../engine/commit-graph.ts";
 import type { ContextEvent } from "../engine/event-log.ts";
-import { forward } from "./forward.ts";
+import { forward, passthrough } from "./forward.ts";
 
 export interface ProxyHandle {
   store: FrameStore;
@@ -184,13 +186,16 @@ export function startProxy(opts: {
     idleTimeout: 120, // SSE round-trips can outlast the 10s default
     fetch(req) {
       const url = new URL(req.url);
+      // Owned routes FIRST — they must never fall through to the transparent forward.
       if (req.method === "POST" && url.pathname === "/v1/messages") {
-        return handleMessages(req);
+        return handleMessages(req); // intercept → ingest → compose → forward → capture
       }
       if (url.pathname.startsWith("/control/")) {
-        return handleControl(req, url);
+        return handleControl(req, url); // local control API (its own 404 for unknown routes)
       }
-      return json({ error: "not found" }, 404);
+      // Everything else is NOT ours: pipe it to the real upstream untouched and stream the
+      // response back (Phase 2.5). No ingest, no compose, no FrameStore/commit-log touch.
+      return passthrough(req, opts.upstreamBaseUrl);
     },
   });
 

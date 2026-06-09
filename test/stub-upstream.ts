@@ -51,16 +51,40 @@ export function makeSSE(spec: RespSpec): string {
   return out;
 }
 
+/** A non-owned request the stub received via the proxy's transparent passthrough — recorded
+ *  so Phase 2.5 tests can assert exactly what the proxy forwarded (method/path/query/body and
+ *  the full header map, since header fidelity is the contract). */
+export interface NonOwnedRecord {
+  method: string;
+  path: string;
+  search: string;
+  body: string;
+  headers: Record<string, string>;
+}
+
+/** A canned response the stub returns for the next non-owned request. */
+export interface PassthroughResp {
+  status?: number;
+  contentType?: string;
+  body: string;
+}
+
 export interface StubUpstream {
   baseUrl: string;
   received: Array<Record<string, unknown>>;
+  /** Non-owned requests that arrived via passthrough (anything but `POST /v1/messages`). */
+  nonOwned: NonOwnedRecord[];
   enqueue: (spec: RespSpec) => void;
+  /** Program the response the stub returns for the next non-owned (passthrough) request. */
+  enqueuePassthrough: (resp: PassthroughResp) => void;
   stop: () => void;
 }
 
 export function startStubUpstream(): StubUpstream {
   const received: Array<Record<string, unknown>> = [];
+  const nonOwned: NonOwnedRecord[] = [];
   const queue: RespSpec[] = [];
+  const passthroughQueue: PassthroughResp[] = [];
 
   const server = Bun.serve({
     port: 0,
@@ -74,14 +98,34 @@ export function startStubUpstream(): StubUpstream {
           headers: { "content-type": "text/event-stream" },
         });
       }
-      return new Response("not found", { status: 404 });
+
+      // Non-owned route: this is what the proxy's transparent passthrough hits. Record the
+      // request verbatim, then reply with the next programmed passthrough response.
+      const headers: Record<string, string> = {};
+      req.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+      nonOwned.push({
+        method: req.method,
+        path: url.pathname,
+        search: url.search,
+        body: await req.text(),
+        headers,
+      });
+      const resp = passthroughQueue.shift() ?? { body: "" };
+      return new Response(resp.body, {
+        status: resp.status ?? 200,
+        headers: { "content-type": resp.contentType ?? "application/json" },
+      });
     },
   });
 
   return {
     baseUrl: `http://localhost:${server.port}`,
     received,
+    nonOwned,
     enqueue: (spec) => queue.push(spec),
+    enqueuePassthrough: (resp) => passthroughQueue.push(resp),
     stop: () => server.stop(true),
   };
 }

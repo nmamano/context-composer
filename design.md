@@ -732,11 +732,16 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   multi-turn session with tool use works end-to-end; deleting a frame from the CLI is
   reflected on the next turn; non-`/v1/messages` calls the TUI makes (e.g. token counting)
   succeed via passthrough rather than 404.
-- **Scope guard:** transparent forwarding only — no per-route logic, no buffering of
-  passthrough traffic; we own/rewrite exactly `/v1/messages`, everything else is a dumb pipe.
-- **Status:** documented as the recommended next step but **not built yet** (deferred by
-  decision). Op-breadth (Phase 3) can proceed on the scripted harness; doing this first
-  would let every later phase be dogfooded against a real session.
+- **Scope guard:** transparent forwarding only — no per-route logic, no rewriting; the
+  **response** is streamed, never buffered (SSE passes through live), while small non-owned
+  **request** bodies (e.g. `count_tokens`) are buffered for simplicity — byte-exact either
+  way. We own/rewrite exactly `POST /v1/messages`; everything else is a dumb pipe.
+- **Status:** **Built.** Catch-all transparent forward landed in `proxy/forward.ts`
+  (`passthrough`) + `proxy/server.ts` (terminal 404 → passthrough); integration test
+  `test/passthrough.test.ts` covers byte-exact forwarding, SSE streaming, engine-bypass, and
+  the route-order invariants. Automated gates green (`bun test`, `tsc`, `demo`, live A/B +
+  Phase-2 scripts); the interactive real-TUI smoke is the one remaining manual acceptance
+  step. Unlocks dogfooding every later phase against a real session.
 - **Size:** S.
 
 ### Phase 3 — Operation breadth (a sequence of vertical op slices)
