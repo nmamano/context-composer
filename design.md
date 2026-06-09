@@ -1,11 +1,5 @@
 # Context Composer — Design Document
 
-*Semantic Frame Context Management System*
-
-> Status: design draft. Background material: [`raw_transcript.md`](./raw_transcript.md).
-
----
-
 ## 1. Summary
 
 **Context Composer** reimagines LLM context as a sequence of composable **semantic
@@ -32,6 +26,14 @@ the active working window at the turn/frame level.** The running model never see
 operations — only the resulting context. This is context engineering performed
 *during* a task on the *live* window, distinct from tools that assemble and version a
 persistent knowledge/memory base *before/around* a task.
+
+**North-star use case (locked).** A developer runs their *real, interactive Claude Code
+session* in one terminal pointed at the Composer proxy, and from a second terminal
+performs live surgery on that session's working context — delete a tangent, offload a
+file dump, revert a bad turn — while the agent keeps working, **unaware**. The abstract
+design stays agent-neutral (any runtime satisfying
+[§9](#9-provider-assumptions--constraints)), but this real-TUI experience is the hero
+target the implementation builds toward.
 
 ---
 
@@ -416,6 +418,17 @@ prompt. Output is inspectable (you can see precisely what the model will receive
   across branches. This keeps provenance honest (everything in the payload literally
   exists on the active branch) and preserves the model-unaware principle. Native
   multi-branch compose is [future work](#10-future-work).
+- **Wire-integrity sweep (load-bearing).** Because frames can be freely edited, deleted,
+  reordered, combined, or split, the resolved payload can end up structurally **invalid for
+  the provider**. `compose` must emit a provider-valid request **unconditionally**: drop an
+  orphaned `tool_use` whose paired `tool_result` was removed (and vice-versa — the firm
+  Anthropic pairing constraint), and repair role-ordering artifacts a deletion can create
+  (a leading assistant turn; a dangling assistant reply whose user turn was deleted;
+  illegal same-role runs). This is the *single* place that guarantees validity, so no
+  individual operation needs guard rails — consistent with **total control by capture, not
+  constraint**: the user may mutate frames into any intermediate state, and `compose`
+  quietly renders something the API will accept. Required **regardless of frame
+  granularity** (it's not a consequence of bundling vs. splitting turns).
 
 **`send [--text <t>]`** — Issue the next model turn: `compose` the context, append the
 new user input, hand it to the backend, and capture the response as a new frame. The
@@ -621,6 +634,15 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   disk alone.
 - **Multi-turn tool-loop validation → carried explicitly by Phase 1**, not deferred to a
   separate spike (the boundary spike validated a single rewrite, not the full loop).
+- **Frame granularity → one frame = the user message + the agent's response (with its
+  tool loop), bundled.** Settled (was open): separating the human and assistant turns into
+  distinct frames was considered and rejected — it would push tool-pairing and
+  role-ordering integrity onto `compose` without net simplification, and fragment one
+  logical tool loop into many frames. Bundling keeps the addressable unit a self-contained
+  exchange; `split` stays the on-demand escape hatch for finer control. *Note:* free
+  editing makes a compose-time **integrity sweep** (drop orphaned `tool_use`/`tool_result`,
+  the firm Anthropic pairing constraint) load-bearing **regardless** of granularity — it
+  lands with the `edit` op in Phase 3.
 - **Genuinely uncertain:** whether shared-vs-isolated *ripple* is needed for the demo.
   The locked decision is *single-branch compose*, not full ripple — so ripple is split
   out and gated (Phase 4b).
@@ -691,12 +713,41 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   [Appendix C](#appendix-c--reconciliation-across-operations).
 - **Size:** M.
 
+### Phase 2.5 — Transparent passthrough (real-interactive-TUI tracer)
+
+- **Goal:** a developer's *real interactive Claude Code TUI session* round-trips cleanly
+  through the proxy, so live surgery works on a real session — the locked north-star use
+  case ([§1.1](#11-positioning-the-one-line-identity)). A thin de-risking slice, placed
+  here on tracer-bullet grounds: the interactive TUI is the ultimate target and "does it
+  round-trip through a faithful proxy?" is a load-bearing unknown the scripted `-p` harness
+  doesn't exercise.
+- **Vertical slice:** make the proxy a faithful transparent MITM — any request it does
+  **not** rewrite (anything other than the `/v1/messages` it owns and its `/control/*`
+  routes) is forwarded to the real upstream untouched (today those 404). Then smoke a real
+  multi-turn interactive session: chat in the TUI, `ctx delete`/`revert` from a second
+  terminal, confirm the next turn reflects it and the session stays healthy.
+- **Files/modules:** `proxy/server.ts` (catch-all transparent forward), `proxy/forward`
+  (reuse the existing upstream forward); no engine changes.
+- **Acceptance:** point a real interactive `claude` at the proxy (`ANTHROPIC_BASE_URL`); a
+  multi-turn session with tool use works end-to-end; deleting a frame from the CLI is
+  reflected on the next turn; non-`/v1/messages` calls the TUI makes (e.g. token counting)
+  succeed via passthrough rather than 404.
+- **Scope guard:** transparent forwarding only — no per-route logic, no buffering of
+  passthrough traffic; we own/rewrite exactly `/v1/messages`, everything else is a dumb pipe.
+- **Status:** documented as the recommended next step but **not built yet** (deferred by
+  decision). Op-breadth (Phase 3) can proceed on the scripted harness; doing this first
+  would let every later phase be dogfooded against a real session.
+- **Size:** S.
+
 ### Phase 3 — Operation breadth (a sequence of vertical op slices)
 
 - **Goal:** grow the §5 toolkit, each op demoable end-to-end through proxy rewrite — not a
   batch "all ops" drop.
 - **Vertical slices (land in order; each = a commit type + CLI verb + compose handling):**
   - **3a** `edit`, `compact` — content authorship + frame-level compaction (high demo value).
+    **Also lands the `compose` wire-integrity sweep** ([§5.F](#5f-composition--runtime)) —
+    `edit` is the first op that can mutate a frame into a provider-invalid state (orphaned
+    `tool_use`/`tool_result`, dangling reply), so the sweep ships *with* it, not later.
   - **3b** `offload`, `restore` — validates file-read retrieval (assumption 5); the live
     token-reclamation beat.
   - **3c** `combine`, `split`, `move`, `add` — structural reshaping.
@@ -709,6 +760,9 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   - `edit`/`compact`: `ctx edit <frame> --text ...` → `compose --dump` shows the
     replacement text; `ctx compact <frame>` → `compose --dump` shows the summary in place
     of the full text; head-hash unchanged when the frame is in the tail.
+  - **wire-integrity:** edit/delete a frame into an orphaned `tool_use` (or delete the user
+    turn beneath an assistant reply) → `compose --dump` still emits a provider-valid request
+    (no orphaned tool blocks, legal role order) and the live `send` succeeds — no 400.
   - `offload`: `ctx offload <frame>` → `compose --dump` shows the stub + file path (not the
     full text) and the frame's token estimate drops; the wrapped agent reading that path
     yields a new tool-result frame.
