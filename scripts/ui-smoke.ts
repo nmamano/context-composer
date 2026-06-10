@@ -38,6 +38,7 @@ interface Conv { id: string; active: boolean; turnFrames: number }
 interface Summary {
   id: string; kind: string; title: string; deleted: boolean; offloaded: boolean;
   overridden: boolean; fileReference: string | null; tokenEstimate: number;
+  inLastView: boolean | null;
 }
 interface ShownFrame {
   id: string; messages: { role: string; content: unknown }[];
@@ -148,16 +149,35 @@ try {
   }
   await shot(page, "conversation");
 
-  // -- toggle to frame view: everything visible, flagged ----------------------
+  // -- toggle to frame view: every non-fork frame visible, flagged; fork-only
+  //    frames are hidden by default behind the F-006 toggle (API = oracle:
+  //    strictly inLastView === false).
   await page.getByRole("tab", { name: "frames" }).click();
   await page.waitForSelector(".frame-view .frame-card");
+  const nonFork = frames.filter((f) => f.inLastView !== false);
+  const forkOnly = frames.filter((f) => f.inLastView === false);
   const cardIds = await page
     .locator(".frame-view .frame-card")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-frame-id")));
   check(
-    JSON.stringify(cardIds) === JSON.stringify(frames.map((f) => f.id)),
-    `frame view shows ALL ${frames.length} frames in store order`,
+    JSON.stringify(cardIds) === JSON.stringify(nonFork.map((f) => f.id)),
+    `frame view shows all ${nonFork.length} non-fork frames in store order (${forkOnly.length} fork-only hidden)`,
   );
+  if (forkOnly.length > 0) {
+    await page.locator(".fork-toggle input").check();
+    const allIds = await page
+      .locator(".frame-view .frame-card")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("data-frame-id")));
+    check(
+      JSON.stringify(allIds) === JSON.stringify(frames.map((f) => f.id)),
+      `fork toggle reveals ALL ${frames.length} frames in store order`,
+    );
+  } else {
+    check(
+      (await page.locator(".fork-toggle").count()) === 0,
+      "no fork-only frames → no fork toggle rendered",
+    );
+  }
   for (const f of frames) {
     const card = page.locator(`.frame-card[data-frame-id="${f.id}"]`);
     const text = await card.innerText();

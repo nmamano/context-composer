@@ -22,13 +22,34 @@ export function FrameView(props: {
    *  card it targets (App owns the form; this is just the placement slot). */
   opFormFrameId?: string | null;
   opForm?: ReactNode;
+  /** F-006: fork-only cards hidden by default (display filter; engine list is
+   *  still the truth — strictly inLastView === false, null is NOT fork-only). */
+  showForkOnly?: boolean;
+  onToggleForkOnly?: () => void;
 }) {
   if (props.frames.length === 0) {
     return <p className="empty">no frames yet</p>;
   }
+  const forkCount = props.frames.filter((f) => f.inLastView === false).length;
+  const visible = props.showForkOnly
+    ? props.frames
+    : props.frames.filter((f) => f.inLastView !== false);
   return (
     <section className="frame-view" aria-label="frame view">
-      {props.frames.map((f) => {
+      {forkCount > 0 && (
+        <label
+          className="fork-toggle"
+          title="fork-only frames rode forked requests (sub-agents, side calls) and never joined the main thread — context inspection only"
+        >
+          <input
+            type="checkbox"
+            checked={props.showForkOnly === true}
+            onChange={() => props.onToggleForkOnly?.()}
+          />
+          show fork-only frames ({forkCount})
+        </label>
+      )}
+      {visible.map((f) => {
         const chips = frameFlags(f);
         return (
           <Fragment key={f.id}>

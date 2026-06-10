@@ -82,6 +82,11 @@ export function App() {
   const [stashedId, setStashedId] = useState<string | null>(null);
   /** F-009: brief "copied" feedback on the conv-key copy button. */
   const [copied, setCopied] = useState(false);
+  /** F-006 (Nil-confirmed): fork-only frames are HIDDEN in the frame view by
+   *  default — a display filter only; the engine's frame list stays the truth
+   *  and the toggle keeps them inspectable. App-level so it survives tab
+   *  switches. */
+  const [showForkOnly, setShowForkOnly] = useState(false);
   const inFlight = useRef(false);
 
   /** The single data path: conversations → list + compose meta → show() per
@@ -208,9 +213,17 @@ export function App() {
   const combineOp = opByVerb("combine")!;
   const activeKey = (loaded && convs.find((c) => c.id === loaded.conv)?.key) || null;
 
-  // F-008: where does the pending form live this render?
+  // F-008: where does the pending form live this render? Inline only when the
+  // target's card is actually visible (F-006 can hide fork-only cards — a
+  // pending form must never be invisible).
+  const targetVisible = (id: string) =>
+    showForkOnly ||
+    loaded?.frames.find((f) => f.id === id)?.inLastView !== false;
   const inlineFormFrameId =
-    pendingOp && view === "frames" && pendingOp.targets.length === 1
+    pendingOp &&
+    view === "frames" &&
+    pendingOp.targets.length === 1 &&
+    targetVisible(pendingOp.targets[0]!)
       ? pendingOp.targets[0]!
       : null;
   const opFormHost = pendingOp ? (
@@ -388,6 +401,8 @@ export function App() {
             onToggleCombine={toggleCombine}
             opFormFrameId={inlineFormFrameId}
             opForm={opFormHost}
+            showForkOnly={showForkOnly}
+            onToggleForkOnly={() => setShowForkOnly((s) => !s)}
           />
         ) : (
           <HistoryView

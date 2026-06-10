@@ -67,6 +67,16 @@ const frames = [
     offloaded: true,
     fileReference: "/tmp/cc-frames/f3-abc.md",
   },
+  // F-006: a fork-only frame (inLastView STRICTLY false) — hidden by default
+  // in the frame view, revealed by the toggle.
+  {
+    ...baseSummary,
+    id: "f4",
+    title: "fork side call",
+    tokenEstimate: 9,
+    deleted: false,
+    inLastView: false,
+  },
 ];
 
 const baseFrame = {
@@ -128,6 +138,13 @@ const shows: Record<string, unknown> = {
     representation: [
       { role: "user", content: "[offloaded] read /tmp/cc-frames/f3-abc.md" },
     ],
+  },
+  f4: {
+    ...baseFrame,
+    id: "f4",
+    title: "fork side call",
+    tokenEstimate: 9,
+    messages: [{ role: "user", content: "FORK-ONLY-CONTENT" }],
   },
 };
 
@@ -231,7 +248,9 @@ test("App: conversation view hides tombstones, frame view flags them, details pa
   // Switcher shows the conversation.
   expect(text).toContain("conv-1");
 
-  // Toggle to the frame view: every frame is a card, deleted flagged not hidden.
+  // Toggle to the frame view: every NON-FORK frame is a card, deleted flagged
+  // not hidden; the fork-only f4 is hidden by default (F-006 — asserted by
+  // this exact list and exercised further in the dedicated test below).
   const tabs = Array.from(container.querySelectorAll(".view-toggle button"));
   const framesTab = tabs.find((b) => b.textContent === "frames")!;
   await act(async () => click(framesTab));
@@ -339,6 +358,59 @@ test("F-009: conv identity rendered selectable; copy button copies the full key"
     });
   }
   await unmount();
+});
+
+// F-006 (Nil-confirmed): fork-only frames are hidden in the frame view by
+// default; the toggle reveals them (strictly inLastView === false — null/true
+// frames are never filtered).
+test("F-006: fork-only frames hidden by default; toggle reveals and re-hides", async () => {
+  const { container, act, tab, unmount } = await renderApp();
+  await act(async () => click(tab("frames")));
+  const ids = () =>
+    Array.from(container.querySelectorAll(".frame-card")).map((c) =>
+      c.getAttribute("data-frame-id"),
+    );
+  expect(ids()).toEqual(["p0", "f1", "f2", "f3"]); // f4 hidden
+  const toggle = container.querySelector(".fork-toggle input")!;
+  expect(container.querySelector(".fork-toggle")!.textContent).toContain("(1)");
+  await act(async () => click(toggle));
+  expect(ids()).toEqual(["p0", "f1", "f2", "f3", "f4"]); // store order kept
+  // The revealed card carries the fork-only chip (flag truth untouched).
+  expect(
+    container.querySelector('.frame-card[data-frame-id="f4"] .chip-fork-only'),
+  ).not.toBeNull();
+  await act(async () => click(toggle));
+  expect(ids()).toEqual(["p0", "f1", "f2", "f3"]);
+  await unmount();
+});
+
+// F-018: entering the conversation view with a selection jumps to its bubble;
+// F-020: without one, the view offers the jump-to-latest control.
+test("F-018/F-020: conversation view jumps to the selected frame on entry; jump button present", async () => {
+  // happy-dom has no layout — record scrollIntoView calls on the prototype.
+  const jumped: string[] = [];
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  const prevScroll = proto.scrollIntoView;
+  proto.scrollIntoView = function (this: Element) {
+    jumped.push(this.getAttribute("data-frame-id") ?? "?");
+  };
+  try {
+    const { container, act, tab, unmount } = await renderApp();
+    // No selection: no jump-to-frame, but the discreet button exists (F-020).
+    expect(container.querySelector(".jump-bottom")).not.toBeNull();
+    expect(jumped).toEqual([]);
+    // Select f1 in the frame view, return to conversation: jump to f1.
+    await act(async () => click(tab("frames")));
+    await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
+    await act(async () => click(tab("conversation")));
+    expect(jumped).toEqual(["f1"]);
+    // Clicking the jump button is a no-throw scroll-to-bottom.
+    await act(async () => click(container.querySelector(".jump-bottom")!));
+    await unmount();
+  } finally {
+    if (prevScroll === undefined) delete proto.scrollIntoView;
+    else proto.scrollIntoView = prevScroll;
+  }
 });
 
 // F-015/F-016: the panel defaults to the core subset with the chips row

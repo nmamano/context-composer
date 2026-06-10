@@ -39,6 +39,9 @@ export function HistoryView(props: {
   const evRows = eventRows(props.events);
   return (
     <section className="history-view" aria-label="history view">
+      {/* F-019: full-width sticky backdrop row — entries scrolling past can
+          never show through beside/above the toggle. */}
+      <div className="history-subtoggle-row">
       <div className="history-subtoggle" role="tablist">
         <button
           role="tab"
@@ -56,6 +59,7 @@ export function HistoryView(props: {
         >
           timeline ({evRows.length})
         </button>
+      </div>
       </div>
 
       {props.subView === "commits" ? (
