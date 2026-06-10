@@ -1,5 +1,7 @@
 // Central runtime configuration for the Phase 1 tracer bullet.
-//
+
+import { resolve } from "node:path";
+
 // The proxy daemon and the `ctx` CLI must agree on where the control API lives;
 // both read from here so a single env var moves them together.
 
@@ -25,3 +27,9 @@ export const STORE_PATH = process.env.CC_STORE_PATH ?? "./.ctx-store.json";
 // default; tests opt in with their own path. Set CC_WIRETAP_PATH=off to disable.
 const wiretapEnv = process.env.CC_WIRETAP_PATH ?? "./.ctx-wiretap.jsonl";
 export const WIRETAP_PATH = wiretapEnv === "off" ? undefined : wiretapEnv;
+
+// Offload artifacts (§11 Phase 3b): rendered frame content the wrapped agent
+// reads back with its own file-read tool. Resolved to an ABSOLUTE path at load —
+// the agent's cwd is not ours, so the stub must carry an absolute reference.
+// Local-only conversation data: dir 0700, files 0600, gitignored.
+export const FRAMES_DIR = resolve(process.env.CC_FRAMES_DIR ?? "./.ctx-frames");

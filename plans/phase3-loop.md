@@ -48,7 +48,7 @@ mode — never blanket-bypass, judge via the wiretap not the pane).
 ## Slice status
 
 - [x] 3a — edit + compact + §5.F wire-integrity sweep — committed, reviewer-signed-off (see design.md §11 Phase 3a Status)
-- [ ] 3b — offload + restore (handoff to be authored after 3a)
+- [x] 3b — offload + restore — committed, reviewer-signed-off (see design.md §11 Phase 3b Status)
 - [ ] 3c — combine + split + move + add (handoff after 3b)
 - [ ] 3d — strip + summarize + retitle (handoff after 3c)
 
@@ -154,3 +154,69 @@ healthy.
   test/fork-isolation.test.ts + test/versioning.test.ts show the house
   patterns; test/stub-upstream.ts for SSE.
 - Wiretap first, debate never: .ctx-wiretap.jsonl / per-smoke tap files.
+
+---
+
+## PHASE 3b PICKUP (offload + restore)
+
+Baseline at authoring time: master @ a5fcc68 (3a committed: representation
+overrides + structural sweep, live-validated).
+
+### Goal
+
+design.md §11 "Phase 3b — offload, restore": validate file-read retrieval
+(provider assumption 5) — the live token-reclamation beat. `offload <frame>`
+swaps the frame's emission for a short stub (note + summary + absolute file
+path) and writes the full content to a file the wrapped agent can read with its
+OWN file-read tool on demand; `restore <frame>` re-injects the full text inline
+(user convenience — the model never needs it). Read §5.D + §11 3b before
+planning.
+
+### Mechanics (build ON 3a — no new categories)
+
+1. Offload IS a representation override: representation = [stub message],
+   commit `offload` with { before, after } like edit/compact. The token drop
+   falls out of the 3a invariant (tokenEstimate tracks emission). The sweep
+   already handles stub-induced role adjacency (live-proven).
+2. The FILE renders the frame's pre-offload EMISSION (representation ??
+   messages) as readable role-labeled markdown — deterministic bytes. The
+   store remains the durable truth; the file is a rendering for the model to
+   read. Frame gains `fileReference` (path) — SNAPSHOT_VERSION 3→4.
+3. The stub must carry an ABSOLUTE path (the agent's cwd is not ours) and a
+   summary: deterministic derivation for the tracer (manual `--summary <s>`,
+   default = first text line truncated). No LLM in 3b.
+4. `restore` sets representation back to the offload commit's `before` (which
+   may be null → source emits again, or a prior edit/compact override). Its own
+   commit type; file left on disk (harmless rendering; the store is the truth).
+5. File namespace: frame ids collide across conversations (t1 exists in every
+   store) — the file name must be namespaced (conv id or store-scoped dir).
+   Registry knows the conv id; the store does not. Decide shape with reviewer.
+6. Same guards as 3a: deleted frames refuse offload; preamble offload deferred
+   (temporary phrasing — the Phase 6 money shot offloads the head, but not in
+   3b); offload-of-offloaded refused (restore first).
+
+### Acceptance (design.md §11 3b)
+
+- `ctx offload <frame>` → `compose --dump` shows the stub + file path, NOT the
+  full text; the frame's token estimate drops; `ctx list` flags it.
+- The wrapped agent reading that path yields a new tool-result frame
+  (continuation capture — normal 2.6/2.7 machinery, nothing special).
+- `ctx restore <frame>` → full text emits inline again; commits/timeline show
+  offload and restore; revert works on both.
+- Restart: fileReference + stub survive (snapshot v4); file still readable.
+- Live TUI smoke: plant a fact, offload the frame, ask about the fact → the
+  model READS THE FILE on its own (wiretap shows the Read tool_use on the
+  offloaded path) and answers correctly; restore → answers without reading.
+
+### Locked / scope guard
+
+- No automatic offload; opt-in per frame (§5.D). No LLM summaries (3d).
+- Files are local-only evidence-grade artifacts: 0600, gitignored dir.
+- reconcile matching untouched; views untouched; no UI.
+
+### Resources
+
+3a machinery: setRepresentation/effectiveTokens in engine/state.ts, sweep in
+engine/wire-integrity.ts, RepInput pattern, content-ops tests as the template.
+New: engine/offload file-rendering helper (or inline in state), config for the
+frames dir (CC_FRAMES_DIR, default ./.ctx-frames). CLI: offload/restore verbs.

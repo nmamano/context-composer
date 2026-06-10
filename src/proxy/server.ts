@@ -72,8 +72,10 @@ export function startProxy(opts: {
   storePath?: string;
   /** JSONL raw-evidence log (§11 Phase 2.6). Omit to disable (tests default off; daemon on). */
   wiretapPath?: string;
+  /** Offload artifact dir (§11 Phase 3b). Omit for the config default; tests pass a tmp dir. */
+  framesDir?: string;
 } = {}): ProxyHandle {
-  const registry = new ConversationRegistry(opts.storePath ?? null);
+  const registry = new ConversationRegistry(opts.storePath ?? null, opts.framesDir);
   const wiretap = opts.wiretapPath ? new Wiretap(opts.wiretapPath) : null;
   // Tracks the in-flight response capture so control reads observe a consistent
   // state (e.g. `ctx list` right after a send reflects the captured assistant).
@@ -253,6 +255,30 @@ export function startProxy(opts: {
             400,
           );
         }
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      // §11 Phase 3b memory ops: offload (stub + artifact file) / restore (inline).
+      if (path === "/control/offload" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; summary?: string }
+          | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        const result = store.offload(
+          parsed.id,
+          typeof parsed.summary === "string" ? { summary: parsed.summary } : {},
+        );
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/restore" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as { id?: string } | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        const result = store.restore(parsed.id);
         return result.ok
           ? json({ conv: conv.id, commit: publicCommit(result.commit) })
           : json({ error: result.error }, 400);

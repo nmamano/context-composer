@@ -58,6 +58,18 @@ export interface Frame {
    *  `representation`: a tombstoned frame emits nothing regardless of override. */
   deleted: boolean;
 
+  /** §11 Phase 3b — the frame's emission is currently the offload stub; the full
+   *  rendered content lives at `fileReference`. Explicit (not derived from
+   *  provenance) because restore/revert/list behavior reads cleaner. Offloaded
+   *  frames refuse edit/compact ("restore first") so the current offload is
+   *  always the last content commit. */
+  offloaded: boolean;
+  /** Absolute path of the rendered artifact for the CURRENT offload (null when
+   *  not offloaded). The filename embeds a content hash, so a committed
+   *  fileReference keeps pointing at the bytes rendered for THAT offload even
+   *  after later offloads of the same frame (append-only revert invariant). */
+  fileReference: string | null;
+
   /** Representation override (§5.C / Appendix C, structural form — §11 Phase 3a).
    *  When set, compose emits THESE messages for the frame instead of the source
    *  `messages`. The source stays authoritative for identity and for reconcile's

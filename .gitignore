@@ -8,3 +8,6 @@ node_modules/
 
 # §11 Phase 2.6 wiretap (raw wire evidence — contains conversation content)
 .ctx-wiretap*.jsonl
+
+# §11 Phase 3b offload artifacts (rendered frame content — conversation data)
+.ctx-frames/

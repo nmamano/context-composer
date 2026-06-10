@@ -950,7 +950,18 @@ rule lives or dies on this gate).
     Live real-TUI: mid-session `ctx edit` flipped the model's answer VERMILION/88 →
     "Teal and 41" → revert → "Vermilion and 88", unaware inbound carrying the original
     throughout; the sweep's same-role merge passed the live API (wiretap-verified).
-  - **3b** `offload`, `restore` — validates file-read retrieval (assumption 5); the live
+  - **3b** `offload`, `restore` — **Status: built and live-validated (2026-06-10).**
+    Offload is a 3a representation override: stub (user-role note + summary +
+    absolute path) on the wire, deterministic markdown rendering of the pre-offload
+    EMISSION on disk at a content-hashed path (`<conv>-<frame>-<sha12>.md` — committed
+    fileReferences never get overwritten; append-only revert holds). Guards keep the
+    current offload the frame's last content commit (edit/compact/offload refuse on
+    offloaded frames; while offloaded, only the current offload commit is revertible —
+    reviewer-caught drift class). Snapshot v4 (offloaded + fileReference). Live
+    real-TUI: the model read the offloaded artifact UNPROMPTED via its own Read tool
+    (wiretap-verified path match) and recovered the codename; restore flipped it back
+    inline — provider assumption 5 validated. Originally:
+    validates file-read retrieval (assumption 5); the live
     token-reclamation beat.
   - **3c** `combine`, `split`, `move`, `add` — structural reshaping.
   - **3d** `strip`, `summarize`, `retitle` — sub-frame content ops.

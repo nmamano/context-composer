@@ -25,7 +25,7 @@ import { decompose } from "./decompose.ts";
 import { reconcile } from "./reconcile.ts";
 import { compose, type ComposeResult } from "./compose.ts";
 import { fingerprintHead, fingerprintMessage } from "./fingerprint.ts";
-import { canonicalStringify, stripCacheControlDeep } from "./canonical.ts";
+import { canonicalStringify, sha256, stripCacheControlDeep } from "./canonical.ts";
 import { estimateTokens } from "./tokens.ts";
 import type { CapturedAssistant } from "./sse.ts";
 import { CommitGraph, type Commit, type CommitType } from "./commit-graph.ts";
@@ -35,6 +35,10 @@ import {
   type ContextEventType,
 } from "./event-log.ts";
 import { SNAPSHOT_VERSION, type Persistence, type StoreSnapshot } from "./store.ts";
+import { deriveSummary, renderFrameMarkdown } from "./offload.ts";
+import { FRAMES_DIR } from "../config.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface FrameSummary {
   id: string;
@@ -47,6 +51,9 @@ export interface FrameSummary {
   /** §11 Phase 3a — a representation override (edit/compact) is in effect; the
    *  emitted content differs from the source the agent resends. */
   overridden: boolean;
+  /** §11 Phase 3b — emission is the offload stub; full content at fileReference. */
+  offloaded: boolean;
+  fileReference: string | null;
   /** §11 Phase 2.7 — was this frame in the LAST emitted view? `false` flags a
    *  fork-only frame (stored, visible, deletable — but the next emission of the
    *  thread that didn't carry it will exclude it). `null` when not applicable:
@@ -92,11 +99,20 @@ export class FrameStore {
    *  after a restart this is null until the next owned request. */
   private lastEmittedView: RequestView | null = null;
 
-  /** @param persistence durable backing store; `null` = pure in-memory (Phase 1). */
-  constructor(persistence: Persistence | null = null) {
+  /** @param persistence durable backing store; `null` = pure in-memory (Phase 1).
+   *  @param namespace prefix for offload artifact filenames (§11 Phase 3b) — the
+   *  registry passes its conv id (derived, never persisted); direct library/test
+   *  stores get a safe default.
+   *  @param framesDir where offload artifacts are written; defaults to the
+   *  configured absolute FRAMES_DIR (tests pass a tmp dir). */
+  constructor(
+    persistence: Persistence | null = null,
+    private readonly namespace: string = "mem",
+    private readonly framesDir: string = FRAMES_DIR,
+  ) {
     this.persistence = persistence;
     const snap = this.persistence?.load();
-    if (snap) this.restore(snap);
+    if (snap) this.restoreSnapshot(snap);
   }
 
   /** Ingest one rendered request: decompose → refresh head → reconcile turn frames.
@@ -138,6 +154,8 @@ export class FrameStore {
         injectedSystem,
         tokenEstimate: estimateTokens(system) + estimateTokens(tools),
         deleted: false,
+        offloaded: false,
+        fileReference: null,
         provenance: [],
         createdEventId: null,
         createdAt: ++this.seq,
@@ -261,6 +279,8 @@ export class FrameStore {
       stopReason: null,
       tokenEstimate: estimateTokens(inc.messages),
       deleted: false,
+      offloaded: false,
+      fileReference: null,
       provenance: [],
       createdEventId: null, // stamped by ingest once the capture event is recorded
       createdAt: ++this.seq,
@@ -366,6 +386,8 @@ export class FrameStore {
       deleted: f.deleted,
       messageCount: f.messages.length,
       overridden: !!f.representation,
+      offloaded: f.offloaded,
+      fileReference: f.fileReference,
       inLastView,
     };
   }
@@ -435,6 +457,12 @@ export class FrameStore {
     if (f.deleted) {
       return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
     }
+    if (f.offloaded) {
+      // Reviewer-required guard (3b): edit/compact of an offloaded frame would
+      // leave stale offload metadata on a non-stub representation and muddy
+      // revert. Keep the current offload the LAST content commit on the frame.
+      return { ok: false, error: `frame ${id} is offloaded — restore it first` };
+    }
 
     // Build the new representation. --text carries the frame opener's role
     // (reviewer point 2: compact must not change role authorship as a side
@@ -475,12 +503,137 @@ export class FrameStore {
     return { ok: true, commit };
   }
 
-  /** Revert a `delete`/`edit`/`compact` commit (append-only inverse commit,
-   *  git-revert style — never a history rewrite). No arg → the HEAD commit, but
-   *  ONLY if it is itself revertible. Ambiguous reverts are refused with a clear
-   *  error rather than silently toggling state. For edit/compact the inverse
-   *  restores ONLY representation/provenance/modifiedAt — never source
-   *  `messages` (reviewer point 6). */
+  /** `offload` (§5.D, §11 Phase 3b): swap the frame's emission for a short stub
+   *  (note + summary + ABSOLUTE artifact path) and render the full pre-offload
+   *  EMISSION (representation ?? messages) to disk for the wrapped agent to read
+   *  back with its own file-read tool (provider assumption 5). The artifact
+   *  filename embeds a content hash, so a committed fileReference keeps pointing
+   *  at the bytes rendered for THAT offload even after later offloads of the
+   *  same frame (append-only revert invariant; identical content re-offloads to
+   *  the identical path — idempotent). The store stays the durable truth. */
+  offload(id: string, opts: { summary?: string } = {}): OpResult {
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (f.kind === "preamble") {
+      return { ok: false, error: `offload on the preamble is not yet supported (deferred past 3b)` };
+    }
+    if (f.deleted) {
+      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
+    }
+    if (f.offloaded) {
+      return { ok: false, error: `frame ${id} is already offloaded — restore it first` };
+    }
+
+    const emission = f.representation ?? f.messages;
+    const rendered = renderFrameMarkdown(f.id, f.title, emission);
+    const hash = sha256(rendered).slice(0, 12);
+    const path = join(this.framesDir, `${this.namespace}-${f.id}-${hash}.md`);
+    // Local-only conversation data: dir 0700, file 0600 (same posture as the
+    // store and the wiretap). A write failure surfaces as a clean op error via
+    // the control API's catch — state is not mutated before the write.
+    mkdirSync(this.framesDir, { recursive: true, mode: 0o700 });
+    writeFileSync(path, rendered, { mode: 0o600 });
+
+    const summary =
+      opts.summary ?? deriveSummary(emission) ?? `offloaded frame ${f.id}`;
+    // User-role stub (deliberate departure from edit/compact role preservation):
+    // this is OUR note to the model inviting a file read, not a reconstruction
+    // of the original speaker. The §5.F sweep handles any role adjacency.
+    const stub: WireMessage[] = [
+      {
+        role: "user",
+        content:
+          `[OFFLOADED FRAME ${f.id}] Summary: ${summary}. ` +
+          `The full content is on disk at ${path} — read that file if you need the details.`,
+      },
+    ];
+
+    const before = f.representation ? structuredClone(f.representation) : null;
+    const commit = this.makeCommit(
+      "offload",
+      [id],
+      { before, after: structuredClone(stub), fileReference: path },
+      `offload ${id} -> ${path}`,
+    );
+    f.representation = stub;
+    f.offloaded = true;
+    f.fileReference = path;
+    f.tokenEstimate = this.effectiveTokens(f);
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent("offload", [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** `restore` (§5.D): re-inject the offloaded frame's pre-offload emission
+   *  inline — a USER convenience only (the model reads the file itself). Finds
+   *  the offload's `before` via the frame's last offload commit (safe: offloaded
+   *  frames refuse edit/compact, so that commit IS the last content commit).
+   *  The artifact file stays on disk — it is a rendering; the store is the truth. */
+  restore(id: string): OpResult {
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (!f.offloaded) {
+      return { ok: false, error: `frame ${id} is not offloaded` };
+    }
+    const offloadCommit = this.currentOffloadCommit(f);
+    if (!offloadCommit) {
+      return { ok: false, error: `frame ${id} is offloaded but has no offload commit (corrupt provenance?)` };
+    }
+    const restored =
+      (offloadCommit.params as { before?: WireMessage[] | null }).before ?? null;
+
+    const commit = this.makeCommit(
+      "restore",
+      [id],
+      {
+        before: structuredClone(f.representation),
+        after: restored ? structuredClone(restored) : null,
+        fileReference: f.fileReference,
+      },
+      `restore ${id}`,
+    );
+    f.representation = restored ? structuredClone(restored) : null;
+    f.offloaded = false;
+    f.fileReference = null;
+    f.tokenEstimate = this.effectiveTokens(f);
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent("restore", [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** The commit that established a frame's CURRENT offload: its most recent
+   *  `offload` commit. Valid lookup because offloaded frames refuse edit/compact
+   *  and (below) refuse reverts of other content commits — so while offloaded,
+   *  the last content commit IS the offload. Shared by restore() and the revert
+   *  coherence guard. */
+  private currentOffloadCommit(f: Frame): Commit | null {
+    for (let i = f.provenance.length - 1; i >= 0; i--) {
+      const c = this.commits.get(f.provenance[i]!);
+      if (c && c.type === "offload") return c;
+    }
+    return null;
+  }
+
+  /** Revert a `delete`/`edit`/`compact`/`offload`/`restore` commit (append-only
+   *  inverse commit, git-revert style — never a history rewrite). No arg → the
+   *  HEAD commit, but ONLY if it is itself revertible. Ambiguous reverts are
+   *  refused with a clear error rather than silently toggling state. For content
+   *  ops the inverse restores ONLY representation/offload-metadata/provenance/
+   *  modifiedAt — never source `messages` (reviewer point 6).
+   *
+   *  Metadata-coherence guard (§11 Phase 3b, reviewer-caught): while a frame is
+   *  OFFLOADED, its representation is the stub at fileReference — reverting any
+   *  content commit other than the current offload itself would swap the
+   *  emission out from under that state (offloaded=true, non-stub emission:
+   *  drift). So while offloaded, only the current offload commit is revertible
+   *  for that frame; everything else: restore first. (delete reverts are
+   *  unaffected — they touch only the tombstone, never representation.) */
   revert(commitId?: string): RevertResult {
     const target = commitId ? this.commits.get(commitId) : this.commits.getHead();
     if (!target) {
@@ -489,10 +642,11 @@ export class FrameStore {
         error: commitId ? `no commit ${commitId}` : "no commits to revert",
       };
     }
-    if (target.type !== "delete" && target.type !== "edit" && target.type !== "compact") {
+    const revertible = ["delete", "edit", "compact", "offload", "restore"];
+    if (!revertible.includes(target.type)) {
       return {
         ok: false,
-        error: `commit ${target.id} is a ${target.type}; only delete/edit/compact commits can be reverted`,
+        error: `commit ${target.id} is a ${target.type}; only ${revertible.join("/")} commits can be reverted`,
       };
     }
     if (this.commits.isReverted(target.id)) {
@@ -504,6 +658,21 @@ export class FrameStore {
         ok: false,
         error: `cannot revert ${target.id}: frame(s) ${missing.join(", ")} no longer exist`,
       };
+    }
+    if (target.type !== "delete") {
+      for (const id of target.affectedFrameIds) {
+        const f = this.show(id)!;
+        if (!f.offloaded) continue;
+        const current = this.currentOffloadCommit(f);
+        if (!current || current.id !== target.id) {
+          return {
+            ok: false,
+            error:
+              `frame ${id} is offloaded — restore it first ` +
+              `(while offloaded, only its current offload commit can be reverted)`,
+          };
+        }
+      }
     }
 
     const commit = this.makeCommit(
@@ -517,10 +686,24 @@ export class FrameStore {
       if (target.type === "delete") {
         f.deleted = false; // lift the tombstone; the frame resumes absorbing the resend
       } else {
-        // edit/compact inverse: restore the prior representation value (which may
+        // Content-op inverse: restore the prior representation value (which may
         // be null = no override). Source `messages` are never touched.
-        const before = (target.params as { before?: WireMessage[] | null }).before ?? null;
-        f.representation = before ? structuredClone(before) : null;
+        const params = target.params as {
+          before?: WireMessage[] | null;
+          fileReference?: string | null;
+        };
+        f.representation = params.before ? structuredClone(params.before) : null;
+        // Offload metadata follows the representation (§11 Phase 3b):
+        // revert(offload) un-offloads; revert(restore) re-instates the stub AND
+        // its committed fileReference — which still points at the right bytes
+        // because artifact filenames are content-hashed (never overwritten).
+        if (target.type === "offload") {
+          f.offloaded = false;
+          f.fileReference = null;
+        } else if (target.type === "restore") {
+          f.offloaded = true;
+          f.fileReference = params.fileReference ?? null;
+        }
         f.tokenEstimate = this.effectiveTokens(f);
       }
       f.modifiedAt = ++this.seq;
@@ -599,7 +782,7 @@ export class FrameStore {
     };
   }
 
-  private restore(s: StoreSnapshot): void {
+  private restoreSnapshot(s: StoreSnapshot): void {
     this.preamble = s.preamble;
     this.frames = s.frames;
     this.envelope = s.envelope;

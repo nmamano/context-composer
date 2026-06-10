@@ -117,9 +117,13 @@ export class ConversationRegistry {
   private convCounter = 0;
   private ingestSeq = 0;
   private readonly path: string | null;
+  private readonly framesDir: string | undefined;
 
-  constructor(path: string | null = null) {
+  /** @param framesDir offload artifact dir override (§11 Phase 3b) — threaded to
+   *  each FrameStore; tests pass a tmp dir, the daemon uses the config default. */
+  constructor(path: string | null = null, framesDir?: string) {
     this.path = path;
+    this.framesDir = framesDir;
     const file = this.loadFile();
     if (file) {
       this.convCounter = file.convCounter;
@@ -135,8 +139,9 @@ export class ConversationRegistry {
           store: null as unknown as FrameStore,
         };
         // The adapter feeds the loaded snapshot into the FrameStore constructor and
-        // routes its saves back into this record + the shared registry file.
-        rec.store = new FrameStore(this.adapterFor(rec));
+        // routes its saves back into this record + the shared registry file. The
+        // conv id doubles as the offload-artifact namespace (derived, stable).
+        rec.store = this.makeStore(rec);
         this.convs.push(rec);
       }
     }
@@ -263,9 +268,15 @@ export class ConversationRegistry {
       snapshot: null,
       store: null as unknown as FrameStore,
     };
-    rec.store = new FrameStore(this.adapterFor(rec));
+    rec.store = this.makeStore(rec);
     this.convs.push(rec);
     return rec;
+  }
+
+  private makeStore(rec: ConvRecord): FrameStore {
+    return this.framesDir !== undefined
+      ? new FrameStore(this.adapterFor(rec), rec.id, this.framesDir)
+      : new FrameStore(this.adapterFor(rec), rec.id);
   }
 
   private adapterFor(rec: ConvRecord): Persistence | null {

@@ -59,6 +59,7 @@ async function cmdList(args: string[]): Promise<void> {
       deleted: boolean;
       messageCount: number;
       overridden: boolean;
+      offloaded: boolean;
       inLastView: boolean | null;
     }>;
   };
@@ -70,7 +71,7 @@ async function cmdList(args: string[]): Promise<void> {
   for (const f of visible) {
     const flags =
       (f.deleted ? " [deleted]" : "") +
-      (f.overridden ? " [override]" : "") +
+      (f.offloaded ? " [offloaded]" : f.overridden ? " [override]" : "") +
       (f.inLastView === false ? " [fork-only]" : "");
     if (f.inLastView === false) sawForkOnly = true;
     console.log(
@@ -139,6 +140,39 @@ async function cmdContentOp(op: "edit" | "compact", args: string[]): Promise<voi
   };
   if (result.error) fail(result.error);
   console.log(`${op === "edit" ? "edited" : "compacted"} ${id} (commit ${result.commit!.id}, conversation ${result.conv})`);
+}
+
+/** §11 Phase 3b memory ops. offload swaps the frame's emission for a stub +
+ *  artifact file the wrapped agent reads back on demand; restore re-injects the
+ *  pre-offload emission inline (user convenience — the model reads the file
+ *  itself). Both are commits; `revert` undoes either. */
+async function cmdOffload(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx offload <frame> [--summary <s>]");
+  const sIdx = args.indexOf("--summary");
+  const body: Record<string, unknown> = { id };
+  if (sIdx >= 0 && args[sIdx + 1] !== undefined) body.summary = args[sIdx + 1];
+  const result = (await post("/control/offload", body)) as {
+    conv?: string;
+    commit?: { id: string; params: { fileReference?: string } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `offloaded ${id} (commit ${result.commit!.id}, conversation ${result.conv})\n  -> ${result.commit!.params.fileReference}`,
+  );
+}
+
+async function cmdRestore(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx restore <frame>");
+  const result = (await post("/control/restore", { id })) as {
+    conv?: string;
+    commit?: { id: string };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(`restored ${id} inline (commit ${result.commit!.id}, conversation ${result.conv})`);
 }
 
 async function cmdCompose(args: string[]): Promise<void> {
@@ -262,6 +296,10 @@ async function main(): Promise<void> {
       return cmdContentOp("edit", args);
     case "compact":
       return cmdContentOp("compact", args);
+    case "offload":
+      return cmdOffload(args);
+    case "restore":
+      return cmdRestore(args);
     case "compose":
       return cmdCompose(args);
     case "history":
@@ -274,7 +312,7 @@ async function main(): Promise<void> {
       return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }
