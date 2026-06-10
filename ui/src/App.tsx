@@ -34,6 +34,7 @@ import { DetailsPanel } from "./components/DetailsPanel.tsx";
 import { OpForm, type FormValues } from "./components/OpMenu.tsx";
 import { HistoryView, type HistorySubView } from "./components/HistoryView.tsx";
 import { opPrefill } from "./prefill.ts";
+import { copyText } from "./copy.ts";
 
 export type ViewMode = "conversation" | "frames" | "history";
 
@@ -79,6 +80,8 @@ export function App() {
    *  it's stashed on entry and restored on exit. Selecting a frame WHILE in
    *  history (frame links) still opens the panel. */
   const [stashedId, setStashedId] = useState<string | null>(null);
+  /** F-009: brief "copied" feedback on the conv-key copy button. */
+  const [copied, setCopied] = useState(false);
   const inFlight = useRef(false);
 
   /** The single data path: conversations → list + compose meta → show() per
@@ -203,6 +206,7 @@ export function App() {
   const addOp = opByVerb("add")!;
   const revertOp = opByVerb("revert")!;
   const combineOp = opByVerb("combine")!;
+  const activeKey = (loaded && convs.find((c) => c.id === loaded.conv)?.key) || null;
 
   // F-008: where does the pending form live this render?
   const inlineFormFrameId =
@@ -249,6 +253,32 @@ export function App() {
             </option>
           ))}
         </select>
+        {loaded && (
+          <span
+            className="conv-key"
+            title={`conversation key: ${activeKey ?? "(none)"}`}
+          >
+            {/* F-009: the active conversation's identity — selectable
+                (user-select: all) and one-click copyable (FULL key; plain-http
+                clipboard fallback in copy.ts). */}
+            <code>
+              {loaded.conv}
+              {activeKey ? ` · ${activeKey.slice(0, 8)}` : ""}
+            </code>
+            <button
+              type="button"
+              className="copy-key"
+              aria-label="copy conversation key"
+              onClick={() => {
+                copyText(activeKey ?? loaded.conv);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1200);
+              }}
+            >
+              {copied ? "✓" : "⧉"}
+            </button>
+          </span>
+        )}
         <div className="view-toggle" role="tablist">
           <button
             role="tab"

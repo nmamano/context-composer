@@ -308,6 +308,39 @@ test("F-014: details panel is stashed entering history and restored on leaving",
   await unmount();
 });
 
+// F-009 (plans/ui-feedback.md): the active conversation's identity is shown as
+// selectable text and the copy button puts the FULL key on the clipboard.
+test("F-009: conv identity rendered selectable; copy button copies the full key", async () => {
+  const { container, act, unmount } = await renderApp();
+  const code = container.querySelector(".conv-key code")!;
+  expect(code).not.toBeNull();
+  expect(code.textContent).toContain("conv-1");
+  expect(code.textContent).toContain("k1");
+  expect(container.querySelector(".conv-key")!.getAttribute("title")).toContain("k1");
+  // Stub the clipboard API; the button must copy the FULL key.
+  const copied: { text: string | null } = { text: null };
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    value: {
+      writeText: (t: string) => {
+        copied.text = t;
+        return Promise.resolve();
+      },
+    },
+    configurable: true,
+  });
+  try {
+    await act(async () => click(container.querySelector(".copy-key")!));
+    expect(copied.text).toBe("k1");
+    expect(container.querySelector(".copy-key")!.textContent).toBe("✓");
+  } finally {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+  }
+  await unmount();
+});
+
 // F-015/F-016: the panel defaults to the core subset with the chips row
 // reserved; show-all reveals the advanced fields.
 test("F-015: details panel shows core fields by default; toggle reveals advanced", async () => {

@@ -33,7 +33,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-002 — Ops menu should dismiss on outside click
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "when i open the 'ops' menu, it should be dismissable when clicking outside of it, rather than having to click 'ops' again to close it"
 - where: frame view, op menu per frame card
 - expected: click outside the open menu closes it
@@ -42,7 +42,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-003 — Offload form should come with the stub pre-generated
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "offload should autogenerate the stub. offering to edit it is fine, but it should come with one ready"
 - where: frame view, offload op form
 - expected: stub field pre-populated with a ready stub; editable before submit
@@ -87,7 +87,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-008 — Op forms (e.g. offload) render at the top of the page; anchor near the trigger instead
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "the 'offload' menu appears at the top of the page. would it make more sense if this kind of menus appeared at the bottom?"
 - where: frame view, op forms
 - expected: form appears near the frame/menu that triggered it (or bottom — Nil has no strong position; near-trigger is the lean)
@@ -96,12 +96,12 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-009 — Conversation id selectable/copyable
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-2
 - what: "make the conversation id (ba5a...) selectable/copy-able"
 - where: topbar / conversation switcher
 - expected: id text selectable; ideally click-to-copy
 - evidence: pure UI
-- resolution: (batch 2)
+- resolution: fixed: topbar shows the active conversation identity as selectable text (user-select: all) with a one-click copy button for the FULL key (new ui/src/copy.ts; execCommand fallback because navigator.clipboard needs a secure context and the daemon is plain http). Regression: app-render.test.tsx "F-009".
 
 ## F-010 — Conversation-level auto-generated summary
 - reported: 2026-06-10 · class: design-question
@@ -114,21 +114,21 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-011 — Nav bar robustness on thin screens (min widths, overflow handling; consider 2-row)
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-2
 - what: "make the nav bar a bit more robust. For thinner screens, 'history' button and even 'frames' can be hidden. They need minimum width with some explicit overflow-handling mechanism (no strong opinion)... consider if having a 2-row nav bar is better."
 - where: topbar
 - expected: explicit overflow handling at narrow widths; no strong mechanism preference
 - evidence: pure UI/CSS
-- resolution: (batch 2)
+- resolution: fixed: topbar flex-wraps onto a second row when thin (2-row only when needed); conv switcher gets min/max width; view toggle never crushes. CSS-only — not unit-assertable, verified in ui:smoke + live.
 
 ## F-012 — Action buttons (add frame, revert last, …) wrap to two lines → uneven heights
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-2
 - what: "the buttons, 'add frame', 'revert last', ... don't look too nice either, as they may get split into 2 lines, giving them uneven heights"
 - where: topbar action buttons
 - expected: buttons keep one line / even heights at all widths
 - evidence: pure UI/CSS
-- resolution: (batch 2, same surface as F-011)
+- resolution: fixed: white-space nowrap on all topbar/store-ops buttons — no mid-button line breaks, even heights. CSS-only.
 
 ## F-013 — Run ops on a frame from the conversation view (open question)
 - reported: 2026-06-10 · class: design-question
@@ -141,7 +141,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-014 — Hide the frame details side panel while in history view
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "when switching to history view, keeping the frame side panel open for a frame that is not tied to the history view is a bit confusing. maybe it should be hidden for history view, and reopened on the other views?"
 - where: history tab + details panel
 - expected: details panel hidden in history view; restored (same frame) on switching back
@@ -150,7 +150,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-015 — Metadata: beginner-friendly subset with a "show all" toggle
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "frames have a lot of metadata fields. I like them. But maybe we should consider a 'beginner-friendly subset' and a toggle to show the full subset."
 - where: details panel
 - expected: curated default subset; toggle reveals everything
@@ -159,7 +159,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-016 — Stable metadata field placement across frames
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-1
+- status: fixed@65dabc7
 - what: "when looking at different frames, metadata fields with the same name stay in place. this is not happening right now because 'fork only' pushes fields down, and the set of fields is not fixed, like the tools can appear... maybe fields that are always there should be moved above fields that only appear sometimes. and maybe the space for 'fork only' can be prereserved"
 - where: details panel
 - expected: fixed field order — always-present fields first; sometimes-present fields (tools, flags) in a stable lower region; reserve space for flags where cheap
