@@ -647,6 +647,38 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   The locked decision is *single-branch compose*, not full ripple — so ripple is split
   out and gated (Phase 4b).
 
+### Standing gate — real-TUI smoke after every deliverable
+
+Every deliverable closes with a **real interactive TUI smoke** in addition to its
+unit/integration tests and the scripted live gates (`live-e2e.sh`, `live-phase2.sh`).
+The scripted `-p` harness does not exercise what the interactive TUI does — side-query
+multiplexing (title/recap/quota/suggestion traffic), re-encoding across resends,
+permission-gated tool loops, streaming behavior — and every major live finding to date
+(the §11 Phase 2.6 fidelity defects, the Phase 2.7 fork leak) was surfaced by a real
+session, not by tests.
+
+The smoke is **agent-drivable** — it does not require a human at a terminal (proven
+during Phase 2.7 validation):
+
+- Run the wrapped agent's real interactive TUI inside a `tmux` session
+  (`send-keys` to drive it, `capture-pane` to read it), with **real auth against the
+  real provider** — never a stub.
+- Point it at a **fresh proxy instance on its own port + store + wiretap paths**; never
+  reuse or clobber a live daemon's state.
+- **Never blanket-bypass the agent's permission gates** (no `bypassPermissions`):
+  run the TUI in its default permission mode and approve prompts interactively,
+  per-action, as they appear in the pane.
+- Exercise at least: a multi-turn exchange, a tool-use turn, whatever surface the
+  deliverable changed, and a `ctx` mutation (e.g. `delete`) reflected on the next turn.
+- **Judge via the wiretap, not the pane**: the per-request evidence
+  (`viewFrameIds`/`omittedFrameIds`, `wireWarnings`, upstream status, exact bodies) is
+  the acceptance record; the pane only shows that the session stayed healthy.
+
+A bonus property observed twice: the TUI's organic side traffic (e.g. spontaneous
+suggestion-mode queries) reproduces the exact shapes the phases are built against —
+prefer waiting for the real shape over synthesizing it (the "test, don't pre-engineer"
+rule lives or dies on this gate).
+
 ### Phase 1 — Tracer bullet: prove the engine loop end-to-end
 
 - **Goal:** one rewritten request round-trips the full loop with a `delete` applied,
