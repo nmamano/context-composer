@@ -450,12 +450,12 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-045 — Mark the latest frame fork-only when it starts with *[SUGGESTION MODE*
 - reported: 2026-06-10 · class: refinement (engine, Nil-decided exception to a locked principle)
-- status: plan-gate-sent 2026-06-10 (awaiting Context Reviewer; option A engine-derived inLastView vs option B display-only laid out, lean A)
+- status: fixed@batch-B (reviewer-signed 2026-06-10: no blocking findings, focused 10/10; live gates waived — compose pinned byte-identical)
 - what: "the final frame is often suggestion, but we have no way mechanically to know it's going to become a fork-only frame. i think we may want to make a one-off exception for this, and mark the latest frame as fork-only if it starts with *[SUGGESTION MODE*. I'm aware that this is brittle and can stop working if claude changes the format. i'm ok with that, as the downside is basically what we have now."
 - where: engine fork-only classification (inLastView), frame view filtering
 - expected: a frame whose content starts with the suggestion-mode marker is treated as fork-only immediately (not only after the next main-thread request reveals it wasn't in the view)
 - evidence: TENSION WITH LOCKED DESIGN ("no content heuristics") — Nil explicitly authorizes a narrow one-off exception and accepts the brittleness (graceful degradation = today's behavior). Engine-touching → plan gate; decide exact mechanism with reviewer (classification at ingest vs display-layer-only marking; display-only would be a pure-UI alternative worth proposing — it avoids touching engine truth entirely)
-- resolution: (next session) plan-gate with Context Reviewer, then implement per outcome
+- resolution: engine batch B: summarize() flips inLastView true→false for any captured turn frame whose first message's first text content (trimmed) starts with the literal `*[SUGGESTION MODE` — derived annotation only (no persistence, no reconcile/compose/membership change); marked in code as the engine's single authorized content heuristic. UI/CLI pick it up for free (F-006 hiding, forkFrames count). Regressions (fork-isolation.test.ts, 5): immediate marking, no-marker control, ANY-not-latest, exact scope (blocks + trim + mid-text negative), compose-unchanged oracle.
 
 ## F-046 — "revert last" belongs in the history tab, not the frames toolbar
 - reported: 2026-06-10 · class: refinement
@@ -469,7 +469,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-047 — Combine should offer the same insert-position menu as add
 - reported: 2026-06-10 · class: refinement (engine + op surface)
-- status: plan-gate-sent 2026-06-10 (awaiting Context Reviewer; engine placement + ops.ts param + route param + CLI flag + combine-panel dropdown in one batch)
+- status: plan-gate GO 2026-06-10 (queued behind batch B; reviewer adjustments: compose skips part-slot emission only when the absorber has explicit placement; after may point at absorbed parts; ops.ts position() unchanged; panel default label "at the first picked frame's place"; full gates incl. dual-client after quota reconfirm)
 - what: "i want to add the same 'insert position' menu as the 'add frame' button" (on combine)
 - where: combine op — engine placement, ops.ts param, control route, CLI flag, UI dropdown
 - expected: combine accepts an optional position (default stays: first pick's slot)
@@ -478,30 +478,33 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-048 — Refresh button gives no feedback that anything happened
 - reported: 2026-06-10 (Nil's "7.1") · class: refinement
-- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
+- status: fixed@8d07063 (batch 9; reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
 - what: "the refresh button has no feedback when you click it that anything happened"
 - where: topbar refresh button
 - expected: clicking refresh visibly acknowledges the click (and ideally distinguishes "refetched, nothing new" from "refetched, updated")
 - evidence: pure UI — loadConversation refetches silently; when nothing changed the render is identical, so a successful click is indistinguishable from a dead button
-- resolution: in batch 9: clicking refresh flashes "✓ refreshed" for 1.2s once the re-fetch lands (the copy-button pattern); min-width keeps the topbar from shifting (F-012). Regression: app-render "F-048"; ui:smoke check.
+- resolution: in batch 9: clicking refresh flashes "✓ refreshed" for 1.2s once the re-fetch lands (the copy-button pattern); min-width keeps the topbar from shifting (F-012). Reviewer finding folded in: flash only on an actually-landed refetch (loadConversation returns success). Regression: app-render "F-048" success+failure legs; ui:smoke check.
+- confirmed: Nil confirmed live ("good").
 
 ## F-049 — History view: commits and timeline should grow downward like the other views
 - reported: 2026-06-10 (Nil's "7.2") · class: refinement
-- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
+- status: fixed@8d07063 (batch 9; reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
 - what: "for history view, commits and timeline should grow downward, just like conversatino and frames views"
 - where: history tab, both sub-views
 - expected: chronological order — oldest at top, newest at bottom (matching conversation + frames); newest stays reachable, likely via open-scrolled-to-bottom + the discreet jump button (the F-020 pattern)
 - evidence: pure UI — both lists deliberately render newest-first since 5c ("the op you just ran is the one you look for"); Nil's report supersedes that lean. Order is derived display state; commit/event truth unchanged
 - resolution: in batch 9: commits + timeline render chronologically (oldest top, newest bottom); the scroller opens at the bottom and re-snaps on sub-view switch; discreet ↓ jump button (the F-020 pattern, mount-only, never fights user scrolling). Regressions: history-view order tests rewritten; ui:smoke order checks for both sub-views.
+- confirmed: Nil confirmed live ("good").
 
 ## F-050 — "enriched" timeline entry indistinguishable; the UI drops the event's note
 - reported: 2026-06-10 · class: bug
-- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
+- status: fixed@8d07063 (batch 9; reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
 - what: "i don't know what 'enriched' means in this context. it looks like the others, afaict"
 - where: history tab, timeline sub-view, event rows
 - expected: the enriched event should explain itself — the engine RECORDS a note ("title+summary via claude-cli:claude-sonnet-4-6@low", per the F-001 plan: "audited not silent") and the route exposes it (batch-A live-check fix), but ui/src/history.ts eventRows() drops `note` and HistoryView never renders it — the view shows less than the API reports (same render-truth class as F-036)
 - evidence: api.ts PublicEvent carries note; eventRows() maps id/type/frameIds/commitId/timestamp only
 - resolution: in batch 9: event rows render the daemon's note (dim, beside the type); the enriched type carries a plain-language tooltip ("a title and summary were written for this frame automatically" — Nil adjusts live). Regressions: history.test.ts note mapping; history-view "F-050" (note rendered, tip jargon-free, non-enriched rows untouched).
+- confirmed: Nil confirmed live ("good. i like the hover explanation. maybe do that for 'capture' too (the two subtypes)") — the capture-subtype tooltips fold into F-052 (they need the engine-side direction distinction).
 - clarified (Nil, 2026-06-10): his original confusion was different — he expected enrichment to change how a CAPTURE entry looks and didn't spot that "enriched" is its own standalone row. Confusion resolved by the F-051 answer. The note-drop gap is still real (view < API); kept queued since rendering the note makes the row self-explanatory — Nil to confirm he still wants it
 
 ## F-051 — Question: why does a capture with p0 alternate after every frame / look duplicated? (answered)
@@ -515,9 +518,19 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-052 — Request-arrival and reply-arrival events share the name "capture" — distinct names?
 - reported: 2026-06-10 · class: design-question
-- status: awaiting Nil's pick (then plan gate — engine event vocabulary)
+- status: Nil picked (b) 2026-06-10 ("sure") — plan-gate sent (engine event surface)
 - what: "Two different things get logged as capture ... shouldn't they have different names then?"
 - where: engine event types (state.ts recordEvent), /control/timeline, CLI timeline, UI timeline rows
 - expected: TBD by Nil — event type vocabulary is engine truth (persisted in the store, shared by CLI and UI), so this is not a display-only rename
 - evidence: ingest-side capture (state.ts ~226: all frames the request touched) vs reply-side capture (state.ts 372: the turn frame alone) are genuinely different moments sharing one type string
 - resolution: options: (a) split the TYPE at record time (e.g. "request" / "reply", or keep "capture" + new "reply") — cleanest vocabulary but old stores carry legacy "capture" events forever, and every consumer (CLI, UI, tests) updates; (b) ADDITIVE detail field on the event (e.g. direction: request|reply) — old events simply lack it, store stays compatible, UI/CLI render friendlier labels from it; (c) leave engine as-is, UI infers from event shape (p0-in-frameIds heuristic) — rejected lean: brittle content-shape inference in the display layer. Lean (b). Nil picks; plan gate before any implementation
+- decided (Nil, 2026-06-10): option (b). Methodology note from Nil: no backward-compat concerns at this point (test data only, no user data) — recorded; (b) stays the pick (his "two subtypes" framing matches it). Scope: engine direction on capture events + route exposure + CLI timeline display + UI subtype labels AND plain-language hover tooltips for both (his F-050 follow-up). Plan-gate sent 2026-06-10.
+
+## F-053 — p0 "grows" on every request: a volatile billing line in the resent system prompt
+- reported: 2026-06-10 (found while answering Nil's F-051 follow-up) · class: design-question
+- status: parked-for-Nil
+- what: every request's capture event lists p0 — investigation showed the engine rule is "created or content-changed only", so p0 appearing every time means its content really changes every request
+- where: engine ingest (preamble refresh + grown detection); visible as timeline noise (F-051)
+- expected: TBD by Nil
+- evidence: wiretap (conv c3, all 16 requests): tools hash IDENTICAL across requests; system hash DIFFERENT on every request; unified diff between consecutive requests = exactly one line, an "x-anthropic-billing-header: ... cch=XXXXX" line embedded in the system text whose cch value rotates per request. Consequences: (1) p0 rides every request capture event, (2) the "no change -> no event" suppression never fires in practice for CC sessions, (3) p0's stored content churns each ingest.
+- resolution: parked — any fix means ignoring/normalizing specific content (a content heuristic, LOCKED by design; would need Nil's explicit one-off exception like F-045). Options if revisited: (a) keep as-is (the timeline tells the truth: the head really does change); (b) Nil-authorized exception: exclude volatile telemetry line(s) from the preamble content signature so "grown" means meaningful growth (signature-only — stored content stays faithful); (c) broader normalization — rejected lean, heuristic creep

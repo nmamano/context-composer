@@ -378,3 +378,110 @@ test("/control/compose: default full-store + viewNote; ?view=last view-scoped; g
     stub.stop();
   }
 });
+
+// ── F-045 (Phase 5e, Nil-authorized 2026-06-10): suggestion-mode frames are ──
+// marked fork-only EARLY — a captured turn frame whose first message's first
+// text content starts (after trim) with the literal `*[SUGGESTION MODE` is
+// annotated inLastView=false even while the last emitted view still carries
+// it. Derived annotation only: store-level, no proxy needed. This is the
+// engine's single authorized content heuristic — these tests pin its exact
+// scope so it cannot silently widen.
+
+const F045_HEAD = {
+  system: "SYS",
+  tools: [{ name: "t", description: "d", input_schema: { type: "object" } }],
+};
+
+test("F-045: marker frame is fork-only IMMEDIATELY (before the next main request reveals it)", () => {
+  const store = new FrameStore();
+  const v1 = store.ingest({ ...F045_HEAD, messages: [{ role: "user", content: "hello main" }] });
+  store.noteEmittedView(v1);
+  // The suggestion side query: full history resent + the marker'd instruction.
+  // Its OWN request view includes the new frame — pre-F-045 that meant
+  // inLastView=true until the next main-thread request dropped it.
+  const v2 = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: "hello main" },
+      { role: "assistant", content: "main reply 1" },
+      { role: "user", content: "*[SUGGESTION MODE: suggest follow-ups]* please" },
+    ],
+  });
+  store.noteEmittedView(v2);
+  const byId = Object.fromEntries(store.list().map((f) => [f.id, f]));
+  expect(byId.t2!.inLastView).toBe(false); // the exception fires
+  expect(byId.t1!.inLastView).toBe(true); // main frame untouched
+  expect(byId.p0!.inLastView).toBeNull(); // preamble: never applicable
+});
+
+test("F-045: control — same shape WITHOUT the marker keeps today's behavior (true until revealed)", () => {
+  const store = new FrameStore();
+  const v1 = store.ingest({ ...F045_HEAD, messages: [{ role: "user", content: "hello main" }] });
+  store.noteEmittedView(v1);
+  const v2 = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: "hello main" },
+      { role: "assistant", content: "main reply 1" },
+      { role: "user", content: "EPHEMERAL INSTRUCTION: suggest follow-ups" },
+    ],
+  });
+  store.noteEmittedView(v2);
+  const byId = Object.fromEntries(store.list().map((f) => [f.id, f]));
+  expect(byId.t2!.inLastView).toBe(true); // no marker → no exception
+});
+
+test("F-045: ANY currently-true marker frame flips, not just the latest (reviewer condition)", () => {
+  const store = new FrameStore();
+  const v = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: "hello main" },
+      { role: "assistant", content: "main reply 1" },
+      { role: "user", content: "*[SUGGESTION MODE: A]* one" },
+      { role: "assistant", content: "suggestions A" },
+      { role: "user", content: "*[SUGGESTION MODE: B]* two" },
+    ],
+  });
+  store.noteEmittedView(v);
+  const byId = Object.fromEntries(store.list().map((f) => [f.id, f]));
+  expect(byId.t1!.inLastView).toBe(true);
+  expect(byId.t2!.inLastView).toBe(false); // earlier marker frame NOT stranded
+  expect(byId.t3!.inLastView).toBe(false);
+});
+
+test("F-045: exact scope — block content + leading whitespace match; mid-text does NOT", () => {
+  const store = new FrameStore();
+  const v = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: [{ type: "text", text: "  *[SUGGESTION MODE: blocks]* hi" }] },
+      { role: "assistant", content: "r1" },
+      { role: "user", content: "quoting *[SUGGESTION MODE in the middle is fine" },
+    ],
+  });
+  store.noteEmittedView(v);
+  const byId = Object.fromEntries(store.list().map((f) => [f.id, f]));
+  expect(byId.t1!.inLastView).toBe(false); // array-of-blocks form + trim
+  expect(byId.t2!.inLastView).toBe(true); // prefix only — mid-text never fires
+});
+
+test("F-045: annotation-only — compose/view membership is byte-identical with and without the marker", () => {
+  const store = new FrameStore();
+  const v1 = store.ingest({ ...F045_HEAD, messages: [{ role: "user", content: "hello main" }] });
+  store.noteEmittedView(v1);
+  const v2 = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: "hello main" },
+      { role: "assistant", content: "main reply 1" },
+      { role: "user", content: "*[SUGGESTION MODE: X]* go" },
+    ],
+  });
+  // The marker frame still composes exactly per ITS request's view — the
+  // annotation never touches membership or emission.
+  expect(v2.frameIds).toContain("t2");
+  const composed = store.compose(v2);
+  expect(composed.emittedFrameIds).toContain("t2");
+  expect(JSON.stringify(composed.body)).toContain("SUGGESTION MODE: X");
+});

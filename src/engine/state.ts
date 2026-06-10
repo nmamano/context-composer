@@ -88,6 +88,30 @@ export type OpResult =
  *  constraint"). */
 export type RepInput = { text: string } | { raw: WireMessage[] };
 
+/** F-045: the suggestion-mode marker — the literal prefix the client puts on
+ *  a suggestion side-query's opening user text. Exact-prefix match on the
+ *  frame's FIRST message's first text content, after leading-whitespace trim.
+ *  See the call site in summarize() for the full design rationale (this is
+ *  the engine's single authorized content heuristic — do not generalize). */
+const SUGGESTION_MARKER = "*[SUGGESTION MODE";
+
+function opensWithSuggestionMarker(f: Frame): boolean {
+  const first = f.messages[0];
+  if (!first) return false;
+  let text = "";
+  if (typeof first.content === "string") {
+    text = first.content;
+  } else if (Array.isArray(first.content)) {
+    for (const b of first.content) {
+      if (b.type === "text" && typeof b.text === "string") {
+        text = b.text;
+        break;
+      }
+    }
+  }
+  return text.trimStart().startsWith(SUGGESTION_MARKER);
+}
+
 export class FrameStore {
   private preamble: Frame | null = null;
   private frames: Frame[] = []; // turn frames in order, including tombstones
@@ -389,10 +413,22 @@ export class FrameStore {
     // applicable: preamble, no view emitted yet, or MANUFACTURED frames (§11
     // Phase 3c — never view members, yet added frames always emit and combined/
     // children emit via resolution; flagging them fork-only would mislead).
-    const inLastView =
+    let inLastView =
       f.kind === "turn" && f.origin === "captured" && this.lastEmittedView
         ? this.lastEmittedView.frameIds.includes(f.id)
         : null;
+    // F-045 (Phase 5e, Nil-authorized 2026-06-10; reviewer-gated): the ONE
+    // content heuristic in the engine — a deliberate, narrow exception to the
+    // locked "no content heuristics" principle. A frame opening with the
+    // client's suggestion-mode marker is a fork-only frame in waiting; without
+    // this it is classified only after the NEXT main-thread request reveals a
+    // view without it. Brittle by ACCEPTED design (Nil: "the downside is
+    // basically what we have now") — if the client changes the marker, this
+    // degrades to late classification. Derived annotation ONLY: list/summarize
+    // and their consumers; no persistence, no reconcile/compose/membership
+    // change. Applies to ANY currently-true captured turn frame (reviewer:
+    // stacked suggestion turns must not strand the earlier one).
+    if (inLastView === true && opensWithSuggestionMarker(f)) inLastView = false;
     return {
       id: f.id,
       kind: f.kind,
