@@ -42,6 +42,21 @@ export function detailsFields(f: Frame): DetailField[] {
   if (f.stopReason !== undefined && f.stopReason !== null) {
     rows.push({ label: "stop reason", value: f.stopReason });
   }
+  // §11 Phase 5b — strip/summarize take tool_use_ids of tool_result blocks in
+  // the CURRENT EMISSION (representation ?? messages — what the store
+  // transforms); surface them so the op form can be filled from here.
+  const resultIds: string[] = [];
+  for (const m of f.representation ?? f.messages) {
+    if (typeof m.content === "string") continue;
+    for (const b of m.content) {
+      if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
+        resultIds.push(b.tool_use_id);
+      }
+    }
+  }
+  if (resultIds.length > 0) {
+    rows.push({ label: "tool_result ids (emission)", value: resultIds.join(", ") });
+  }
   rows.push({
     label: "provenance",
     value: f.provenance.length > 0 ? f.provenance.join(" → ") : "(no ops yet)",

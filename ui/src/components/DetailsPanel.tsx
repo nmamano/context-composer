@@ -19,6 +19,8 @@ function Messages({ messages, label }: { messages: WireMessage[]; label: string 
       {messages.length === 0 && <p className="empty">(no messages)</p>}
       {messages.map((m, i) => (
         <div key={i} className={`details-message ${m.role}`}>
+          {/* §11 Phase 5b — message indices are split's boundary coordinates. */}
+          <span className="msg-index">#{i}</span>
           <span className="bubble-role">{m.role}</span>
           {messageBlocks(m).map((b, j) =>
             b.kind === "text" ? (

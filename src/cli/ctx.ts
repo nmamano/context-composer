@@ -437,6 +437,64 @@ async function cmdRevert(args: string[]): Promise<void> {
   console.log(`reverted ${r.params.revertedCommitId} (new commit ${r.id})`);
 }
 
+// §11 Phase 5b — the CLI's verb surface as DATA, exported for the mechanical
+// UI-parity gate (design.md §11 Phase 5: the UI surfaces no operation lacking a
+// CLI verb, verified by diffing lists, not by principle). The dispatch table
+// below is BUILT FROM these constants, so they cannot drift from what the CLI
+// actually accepts.
+export const CTX_MUTATING_VERBS = [
+  "delete",
+  "edit",
+  "compact",
+  "offload",
+  "restore",
+  "add",
+  "move",
+  "combine",
+  "split",
+  "strip",
+  "summarize",
+  "retitle",
+  "revert",
+] as const;
+
+export const CTX_READONLY_VERBS = [
+  "list",
+  "show",
+  "compose",
+  "history",
+  "timeline",
+  "conversations",
+] as const;
+
+type Verb =
+  | (typeof CTX_MUTATING_VERBS)[number]
+  | (typeof CTX_READONLY_VERBS)[number];
+
+/** Dispatch table keyed by the exported verb union — adding a verb to a
+ *  constant without a handler (or vice versa) is a TYPE error, not drift. */
+const COMMANDS: Record<Verb, (args: string[]) => Promise<void>> = {
+  list: cmdList,
+  show: cmdShow,
+  delete: cmdDelete,
+  edit: (args) => cmdContentOp("edit", args),
+  compact: (args) => cmdContentOp("compact", args),
+  offload: cmdOffload,
+  restore: cmdRestore,
+  add: cmdAdd,
+  move: cmdMove,
+  combine: cmdCombine,
+  split: cmdSplit,
+  strip: cmdStrip,
+  summarize: cmdSummarize,
+  retitle: cmdRetitle,
+  compose: cmdCompose,
+  history: cmdHistory,
+  timeline: cmdTimeline,
+  revert: cmdRevert,
+  conversations: cmdConversations,
+};
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   // Global --conv <id>: target a specific conversation instead of the active one.
@@ -448,50 +506,17 @@ async function main(): Promise<void> {
     argv.splice(convIdx, 2);
   }
   const [cmd, ...args] = argv;
-  switch (cmd) {
-    case "list":
-      return cmdList(args);
-    case "show":
-      return cmdShow(args);
-    case "delete":
-      return cmdDelete(args);
-    case "edit":
-      return cmdContentOp("edit", args);
-    case "compact":
-      return cmdContentOp("compact", args);
-    case "offload":
-      return cmdOffload(args);
-    case "restore":
-      return cmdRestore(args);
-    case "add":
-      return cmdAdd(args);
-    case "move":
-      return cmdMove(args);
-    case "combine":
-      return cmdCombine(args);
-    case "split":
-      return cmdSplit(args);
-    case "strip":
-      return cmdStrip(args);
-    case "summarize":
-      return cmdSummarize(args);
-    case "retitle":
-      return cmdRetitle(args);
-    case "compose":
-      return cmdCompose(args);
-    case "history":
-      return cmdHistory(args);
-    case "timeline":
-      return cmdTimeline(args);
-    case "revert":
-      return cmdRevert(args);
-    case "conversations":
-      return cmdConversations(args);
-    default:
-      fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | strip <id> --result <ids>|--all-results | summarize <id> --text <s>|--regen | retitle <id> --title <t>|--regen | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
-      );
+  const handler = cmd !== undefined ? COMMANDS[cmd as Verb] : undefined;
+  if (!handler) {
+    fail(
+      `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | strip <id> --result <ids>|--all-results | summarize <id> --text <s>|--regen | retitle <id> --title <t>|--regen | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+    );
   }
+  return handler!(args);
 }
 
-main().catch((e) => fail(String(e)));
+// Run only as a CLI entrypoint — importing this module (the parity test does)
+// must never execute a command.
+if (import.meta.main) {
+  main().catch((e) => fail(String(e)));
+}

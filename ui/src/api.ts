@@ -64,3 +64,26 @@ export async function fetchComposeMeta(conv: string): Promise<ComposeMeta> {
     `/control/compose?conv=${encodeURIComponent(conv)}&hashHead`,
   );
 }
+
+/** §11 Phase 5b — dispatch one op through its control route. ALWAYS an explicit
+ *  ?conv= (never the daemon's active-conversation default); on a non-2xx the
+ *  daemon's own error text is thrown VERBATIM — the guards speak, the UI never
+ *  paraphrases or pre-empts them. */
+export async function postOp(
+  conv: string,
+  route: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const res = await fetch(`${route}?conv=${encodeURIComponent(conv)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => null)) as
+    | { error?: string }
+    | null;
+  if (!res.ok) {
+    throw new Error(data?.error ?? `${route} failed (${res.status})`);
+  }
+  return data;
+}

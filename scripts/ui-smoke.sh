@@ -28,7 +28,11 @@ bun run ui:build >/dev/null
 cp "$FIXTURE" "$SMOKE_DIR/store.json"
 mkdir -p "$SMOKE_DIR/frames"
 
-echo "[ui-smoke] starting smoke daemon on :$PORT (own store/wiretap/frames)…"
+echo "[ui-smoke] starting smoke daemon on :$PORT (own store/wiretap/frames; LLM env scrubbed)…"
+# env -u CC_LLM_*: regen must be UNAVAILABLE in this gate so regen clicks are
+# daemon refusals, never upstream LLM calls — keeps the op smoke quota-free
+# (§11 Phase 5b reviewer guardrail).
+env -u CC_LLM_API_KEY -u CC_LLM_MODEL \
 CC_PROXY_PORT="$PORT" \
 CC_STORE_PATH="$SMOKE_DIR/store.json" \
 CC_WIRETAP_PATH="$SMOKE_DIR/wiretap.jsonl" \

@@ -1,10 +1,14 @@
 // App shell — the ONLY stateful component, and its state is strictly client
-// concerns: which conversation, which view, which frame is selected, plus a
-// fetch-cache of control-API responses. No frame state is owned here and no op
-// logic exists here (§3/§8 thin wrapper) — 5a is read-only.
+// concerns: which conversation, which view, which frame is selected, which op
+// form is open, plus a fetch-cache of control-API responses. No frame state is
+// owned here and no op LOGIC exists here (§3/§8 thin wrapper).
 //
-// ONE data path (loadConversation) feeds everything; refresh = run it again.
-// 5b's post-op refetch will call the same path after each mutation.
+// §11 Phase 5b: ops dispatch through the shared registry (src/shared/ops.ts) to
+// the SAME control routes the CLI uses — postOp + the ONE loadConversation
+// refetch on success AND refusal (both views re-derive; no optimistic state, no
+// per-view patching). Refusals render the daemon's text VERBATIM in a sticky
+// banner (cleared by the next successful op or manual dismiss — never by a
+// refetch).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -12,14 +16,18 @@ import {
   fetchConversations,
   fetchFrame,
   fetchFrames,
+  postOp,
   type ComposeMeta,
   type ConversationSummary,
   type Frame,
   type FrameSummary,
 } from "./api.ts";
+import type { OpSpec } from "../../src/shared/ops.ts";
+import { opByVerb } from "../../src/shared/ops.ts";
 import { ConversationView } from "./components/ConversationView.tsx";
 import { FrameView } from "./components/FrameView.tsx";
 import { DetailsPanel } from "./components/DetailsPanel.tsx";
+import { OpForm, type FormValues } from "./components/OpMenu.tsx";
 
 export type ViewMode = "conversation" | "frames";
 
@@ -30,17 +38,34 @@ interface Loaded {
   details: Map<string, Frame>;
 }
 
+/** A registry op opened against 0..n targets, awaiting form params. */
+interface PendingOp {
+  op: OpSpec;
+  targets: string[];
+}
+
+interface OpError {
+  conv: string;
+  verb: string;
+  frameIds: string[];
+  message: string;
+}
+
 export function App() {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [view, setView] = useState<ViewMode>("conversation");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingOp, setPendingOp] = useState<PendingOp | null>(null);
+  const [opError, setOpError] = useState<OpError | null>(null);
+  const [combineMode, setCombineMode] = useState(false);
+  const [combineIds, setCombineIds] = useState<string[]>([]);
   const inFlight = useRef(false);
 
   /** The single data path: conversations → list + compose meta → show() per
-   *  frame. Explicit ?conv= on every store-scoped request (no reliance on the
-   *  daemon's active-conversation side effects). */
+   *  frame. Explicit ?conv= on every store-scoped request. 5b's post-op
+   *  refetch is THIS function — there is no second path. */
   const loadConversation = useCallback(async (convId?: string | null) => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -76,12 +101,57 @@ export function App() {
     void loadConversation();
   }, [loadConversation]);
 
-  // On-focus refetch (reviewer-chosen 5a refresh model: manual + on-focus).
+  // On-focus refetch (5a refresh model: manual + on-focus).
   useEffect(() => {
     const onFocus = () => void loadConversation(loaded?.conv);
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [loadConversation, loaded?.conv]);
+
+  /** Dispatch one registry op: build body → POST the op's own control route →
+   *  refetch via the single path. Success clears the sticky refusal; a refusal
+   *  replaces it with the daemon's text verbatim. */
+  const runOp = useCallback(
+    async (op: OpSpec, targets: string[], values: FormValues) => {
+      if (!loaded) return;
+      setPendingOp(null);
+      try {
+        await postOp(loaded.conv, op.route, op.build(targets, values));
+        setOpError(null);
+        if (op.verb === "combine") {
+          setCombineMode(false);
+          setCombineIds([]);
+        }
+      } catch (err) {
+        setOpError({
+          conv: loaded.conv,
+          verb: op.verb,
+          frameIds: targets,
+          message: String(err instanceof Error ? err.message : err),
+        });
+      }
+      await loadConversation(loaded.conv);
+    },
+    [loaded, loadConversation],
+  );
+
+  /** Menu pick: param-less ops run immediately; others open the generated form. */
+  const pickOp = useCallback(
+    (op: OpSpec, targets: string[]) => {
+      if (op.params.length === 0) {
+        void runOp(op, targets, {});
+      } else {
+        setPendingOp({ op, targets });
+      }
+    },
+    [runOp],
+  );
+
+  const toggleCombine = useCallback((id: string) => {
+    setCombineIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }, []);
 
   const selected =
     loaded && selectedId ? (loaded.details.get(selectedId) ?? null) : null;
@@ -89,6 +159,10 @@ export function App() {
     loaded && selectedId
       ? (loaded.frames.find((f) => f.id === selectedId) ?? null)
       : null;
+
+  const addOp = opByVerb("add")!;
+  const revertOp = opByVerb("revert")!;
+  const combineOp = opByVerb("combine")!;
 
   return (
     <div className="app">
@@ -100,6 +174,8 @@ export function App() {
           value={loaded?.conv ?? ""}
           onChange={(e) => {
             setSelectedId(null);
+            setCombineMode(false);
+            setCombineIds([]);
             void loadConversation(e.target.value);
           }}
         >
@@ -129,6 +205,35 @@ export function App() {
             frames
           </button>
         </div>
+        {loaded && (
+          <div className="store-ops">
+            {/* Store-scoped ops (arity none) live in the topbar, not on cards. */}
+            <button className="op-add" onClick={() => pickOp(addOp, [])}>
+              add frame
+            </button>
+            <button className="op-revert" onClick={() => pickOp(revertOp, [])}>
+              revert last
+            </button>
+            <button
+              className={`op-combine ${combineMode ? "on" : ""}`}
+              onClick={() => {
+                setCombineMode((m) => !m);
+                setCombineIds([]);
+              }}
+            >
+              {combineMode ? "cancel combine" : "combine…"}
+            </button>
+            {combineMode && (
+              <button
+                className="op-combine-run"
+                disabled={combineIds.length < 2}
+                onClick={() => void runOp(combineOp, combineIds, {})}
+              >
+                combine {combineIds.length} selected
+              </button>
+            )}
+          </div>
+        )}
         <button
           className="refresh"
           onClick={() => void loadConversation(loaded?.conv)}
@@ -138,6 +243,33 @@ export function App() {
       </header>
 
       {error && <div className="error-banner">control API error: {error}</div>}
+      {opError && (
+        <div className="op-error-banner" role="alert">
+          <strong>{opError.verb}</strong>
+          {opError.frameIds.length > 0 && <> on {opError.frameIds.join(", ")}</>} (
+          {opError.conv}) refused: {opError.message}
+          <button
+            className="dismiss"
+            aria-label="dismiss error"
+            onClick={() => setOpError(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {pendingOp && (
+        <div className="op-form-host">
+          <OpForm
+            op={pendingOp.op}
+            onSubmit={(values) => void runOp(pendingOp.op, pendingOp.targets, values)}
+            onCancel={() => setPendingOp(null)}
+          />
+          {pendingOp.targets.length > 0 && (
+            <p className="op-form-target">target: {pendingOp.targets.join(", ")}</p>
+          )}
+        </div>
+      )}
 
       <main className={selected ? "with-details" : ""}>
         {!loaded ? (
@@ -157,6 +289,10 @@ export function App() {
             frames={loaded.frames}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            onPickOp={(op, frameId) => pickOp(op, [frameId])}
+            combineMode={combineMode}
+            combineIds={combineIds}
+            onToggleCombine={toggleCombine}
           />
         )}
         {selected && (

@@ -1,15 +1,22 @@
-// Frame view (§4/§8) — the manipulation surface, 5a read-only form: a LINEAR
-// list of frame cards in store order (the SVG git-tree is parked until branches
-// exist — Phase 4). Shows EVERYTHING list() returns, deleted/absorbed/split
-// included, each flagged via the shared chip mapping; the op menu arrives in 5b.
+// Frame view (§4/§8) — the manipulation surface. 5a: linear cards in store
+// order, everything list() returns, flagged. 5b: each card hosts the op menu
+// GENERATED from the shared registry, plus a combine selection mode. Ops are
+// never hidden/disabled by frame STATE — the daemon's guards speak (reviewer
+// condition); the SVG git-tree stays parked until branches exist (Phase 4).
 
 import type { FrameSummary } from "../../../src/engine/state.ts";
+import type { OpSpec } from "../../../src/shared/ops.ts";
 import { frameFlags } from "../flags.ts";
+import { OpMenu } from "./OpMenu.tsx";
 
 export function FrameView(props: {
   frames: FrameSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onPickOp: (op: OpSpec, frameId: string) => void;
+  combineMode: boolean;
+  combineIds: string[];
+  onToggleCombine: (id: string) => void;
 }) {
   if (props.frames.length === 0) {
     return <p className="empty">no frames yet</p>;
@@ -27,15 +34,29 @@ export function FrameView(props: {
               f.kind,
               f.deleted ? "is-deleted" : "",
               props.selectedId === f.id ? "selected" : "",
+              props.combineIds.includes(f.id) ? "combine-selected" : "",
             ]
               .filter(Boolean)
               .join(" ")}
             onClick={() => props.onSelect(f.id)}
           >
             <header>
+              {props.combineMode && (
+                <input
+                  type="checkbox"
+                  className="combine-check"
+                  aria-label={`combine ${f.id}`}
+                  checked={props.combineIds.includes(f.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => props.onToggleCombine(f.id)}
+                />
+              )}
               <span className="frame-id">{f.id}</span>
               <span className="frame-title">{f.title}</span>
               <span className="frame-tokens">{f.tokenEstimate} tok</span>
+              <span onClick={(e) => e.stopPropagation()}>
+                <OpMenu frameId={f.id} onPick={(op) => props.onPickOp(op, f.id)} />
+              </span>
             </header>
             {f.summary && <p className="frame-summary">{f.summary}</p>}
             {chips.length > 0 && (
