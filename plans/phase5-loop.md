@@ -114,6 +114,15 @@ available: system Google Chrome 145 + Playwright 1.60 via bunx):
 
 ## Deferred / parked (do not pick up without Nil)
 
+- delete-on-preamble stays ALLOWED with no UI confirm (Nil, 2026-06-10,
+  after live-testing it): §8's "operable like any other frame, delete
+  included" holds; the engine stays faithful. Known foot-gun under
+  subscription auth — OAuth tokens are only honored for requests carrying
+  the CC system prompt, so a deleted p0 makes upstream 429 every next turn
+  ("Server is temporarily limiting requests"); wiretap shows
+  hasSystem:false → 429 rate_limit_error. RECOVERY: revert the delete
+  commit (UI history tab or `ctx revert <commit>`) — live-verified to heal
+  the session in place. Revisit a UI-side confirm only if it bites again.
 - Phase 4 branching (incl. tree view) — after 5c.
 - `send` from the UI (the §5.F verb — UI-originated turns): big auth/path
   decision; the wrapped agent stays the only originator for now.
