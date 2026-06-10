@@ -47,6 +47,7 @@ export function HistoryView(props: {
           role="tab"
           aria-selected={props.subView === "commits"}
           className={props.subView === "commits" ? "on" : ""}
+          title="operations as commits — params, before/after diff, click-to-revert"
           onClick={() => props.onSubView("commits")}
         >
           commits ({rows.length})
@@ -55,6 +56,7 @@ export function HistoryView(props: {
           role="tab"
           aria-selected={props.subView === "timeline"}
           className={props.subView === "timeline" ? "on" : ""}
+          title="the full audit log — every capture and operation, in order"
           onClick={() => props.onSubView("timeline")}
         >
           timeline ({evRows.length})

@@ -78,7 +78,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-006 — Default-hide fork-only frames in frame view (with a toggle to show)
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-3
+- status: fixed@c84aecf
 - what: "most users may not want to even see fork frames... nice to be able to see them and inspect. maybe the ui should default to hiding those frames?"
 - where: frame view, fork-only frame cards (e.g. t6 "[SUGGESTION MODE:...")
 - expected: fork-only frames hidden by default; toggle reveals them
@@ -191,7 +191,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-018 — Switching to conversation view should jump to the selected frame
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-3
+- status: fixed@c84aecf
 - what: "when selecting a frame in frames or history view, and then switching to conversation view, it would be nice to jump/autoscroll to it. I know autoscroll can be tricky so do not try to overengineer this"
 - where: conversation view on entry with a selection
 - expected: view opens scrolled to the selected frame's first bubble; no scroll-fighting afterwards
@@ -200,7 +200,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-019 — History sub-toggle (commits|timeline) overlaps entries when scrolling
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-3
+- status: fixed@c84aecf
 - what: "commits and timeline buttons should never overlap with the entries below them"
 - where: history tab, sticky sub-toggle
 - expected: entries never show through/around the sticky toggle row
@@ -209,7 +209,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-020 — Conversation view should open scrolled to the bottom (+ discreet jump button)
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-3
+- status: fixed@c84aecf
 - what: "going to the conversation view should default to scrolling to the bottom, since that's the most recent activity. a discreet button to scroll to the bottom may also be helpful"
 - where: conversation view
 - expected: opens at latest activity when nothing is selected (F-018 wins when a selection exists); small jump-to-bottom control
@@ -218,21 +218,21 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-021 — Explanation tooltips for all buttons
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-4
 - what: "add explanation tooltips for all the buttons, it's not clear what they do. e.g., what does refresh do? not clear"
 - where: topbar + view controls + op surfaces
 - expected: title tooltips describing each control's action
 - evidence: pure UI
-- resolution: (batch 4)
+- resolution: fixed: title tooltips on every topbar control (tabs, store ops, switcher, copy, refresh), the per-frame ops menu trigger, details close/fields toggle, history sub-toggle. Regression: app-render.test.tsx "F-021" (non-empty title on all topbar controls).
 
 ## F-022 — "combine…" button is cut off
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-4
 - what: "'combine...' button is cut off"
 - where: topbar store-ops
 - expected: button renders fully at all widths
 - evidence: store-ops buttons can flex-shrink below content width
-- resolution: (batch 4) flex-shrink: 0 + verify in browser
+- resolution: fixed: flex-shrink:0 on store-ops buttons + conv-key (nowrap already set in batch 2) — buttons can no longer be squashed below content. CSS-only; Nil to confirm visually.
 
 ## F-023 — Why is refresh right-aligned? (question)
 - reported: 2026-06-10 · class: observation
@@ -245,18 +245,18 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-024 — Favicon + capitalized tab title
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-4
 - what: "add a favicon and capitalization on the tab name"
 - where: ui/index.html (<title>context composer</title>, icon is the deliberate empty data: URI that suppresses /favicon.ico passthrough hits)
 - expected: real icon + "Context Composer"
 - evidence: must stay a data: URI (or /ui-scoped asset) so no implicit /favicon.ico request leaks into the transparent passthrough
-- resolution: (batch 4) inline SVG data-URI favicon + title case
+- resolution: fixed: <title>Context Composer</title> + real favicon as inline SVG data URI (two stacked frame cards) — stays a data: URI so no implicit request leaks past /ui into the passthrough. ui:smoke asserts both.
 
 ## F-025 — Conversation identity appears twice (switcher + copy span), inconsistent lengths
 - reported: 2026-06-10 · class: refinement
-- status: triaged
+- status: fixed@batch-4
 - what: "now the ui is a bit awkward. the convo id appears twice in close proximity... one is long form and one is prefix only. not clear why. maybe use short in both? not sure"
 - where: topbar conv switcher + F-009 conv-key span
 - expected: identity shown once coherently; short form preferred
 - evidence: switcher options carry key.slice(0,24); the span carries key.slice(0,8)
-- resolution: (batch 4) plan: drop the key from switcher options (id · turns · active); the span stays the single key surface (short prefix, selectable, copy-FULL button + full key in tooltip) — Nil can veto
+- resolution: fixed: switcher options now carry id + turns + active only; the conv-key span is the single key surface (8-char prefix, full key in tooltip, copy-full button). Regression: app-render.test.tsx "F-025".

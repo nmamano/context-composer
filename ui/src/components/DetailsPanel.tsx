@@ -59,7 +59,12 @@ export function DetailsPanel(props: {
     <aside className="details-panel" aria-label="frame details">
       <header>
         <h2>{f.title}</h2>
-        <button className="close" onClick={props.onClose} aria-label="close details">
+        <button
+          className="close"
+          onClick={props.onClose}
+          aria-label="close details"
+          title="close details"
+        >
           ×
         </button>
       </header>
@@ -86,6 +91,7 @@ export function DetailsPanel(props: {
       <button
         type="button"
         className="fields-toggle"
+        title="toggle between the beginner-friendly subset and every metadata field"
         onClick={() => setShowAll((s) => !s)}
       >
         {showAll ? "show fewer fields" : `show all fields (${hiddenCount} more)`}

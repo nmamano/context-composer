@@ -413,6 +413,37 @@ test("F-018/F-020: conversation view jumps to the selected frame on entry; jump 
   }
 });
 
+// F-021: every interactive control explains itself — title (or aria-label)
+// present and non-empty on all topbar buttons and the ops-menu summary.
+test("F-021: all topbar controls carry explanation tooltips", async () => {
+  const { container, act, tab, unmount } = await renderApp();
+  const topbarButtons = Array.from(
+    container.querySelectorAll(".topbar button, .topbar select"),
+  );
+  expect(topbarButtons.length).toBeGreaterThanOrEqual(7); // tabs, store-ops, copy, refresh, switcher
+  for (const el of topbarButtons) {
+    const tip = el.getAttribute("title") ?? "";
+    expect(tip.length).toBeGreaterThan(0);
+  }
+  // The per-frame ops menu trigger too.
+  await act(async () => click(tab("frames")));
+  const summary = container.querySelector(".op-menu summary")!;
+  expect((summary.getAttribute("title") ?? "").length).toBeGreaterThan(0);
+  await unmount();
+});
+
+// F-025: the switcher options carry id + turns only — the key lives ONLY in
+// the conv-key span (single surface, short prefix, copy-full).
+test("F-025: conversation identity appears once — options have no key, the span has it", async () => {
+  const { container, unmount } = await renderApp();
+  const option = container.querySelector(".conv-switcher option")!;
+  expect(option.textContent).toContain("conv-1");
+  expect(option.textContent).toContain("turns");
+  expect(option.textContent).not.toContain("k1");
+  expect(container.querySelector(".conv-key code")!.textContent).toContain("k1");
+  await unmount();
+});
+
 // F-015/F-016: the panel defaults to the core subset with the chips row
 // reserved; show-all reveals the advanced fields.
 test("F-015: details panel shows core fields by default; toggle reveals advanced", async () => {

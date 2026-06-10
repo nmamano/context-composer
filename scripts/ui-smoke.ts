@@ -113,6 +113,15 @@ try {
 
   await page.goto(`${base}/ui`, { waitUntil: "networkidle" });
 
+  // F-024: capitalized tab title + a real (data:-URI) favicon declared.
+  check((await page.title()) === "Context Composer", "tab title is 'Context Composer'");
+  check(
+    await page
+      .locator('link[rel="icon"]')
+      .evaluate((el) => (el.getAttribute("href") ?? "").startsWith("data:image/svg+xml")),
+    "favicon is an inline SVG data URI (no request outside /ui)",
+  );
+
   // -- conversation view (default): the engine's emission, rendered -----------
   await page.waitForSelector(".conversation-view .bubble");
   for (const id of compose.emittedFrameIds) {

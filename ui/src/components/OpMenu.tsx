@@ -126,7 +126,12 @@ export function OpMenu(props: {
   }, []);
   return (
     <details ref={ref} className="op-menu" data-frame-id={props.frameId}>
-      <summary aria-label={`ops for ${props.frameId}`}>ops ▾</summary>
+      <summary
+        aria-label={`ops for ${props.frameId}`}
+        title="operations on this frame — same verbs as the ctx CLI; the daemon's guards decide what's allowed"
+      >
+        ops ▾
+      </summary>
       <ul>
         {singleTargetOps().map((op) => (
           <li key={op.verb}>

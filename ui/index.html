@@ -3,10 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- data: icon suppresses the implicit /favicon.ico request, which would fall
-         outside /ui and (correctly) hit the transparent passthrough → upstream 404. -->
-    <link rel="icon" href="data:," />
-    <title>context composer</title>
+    <!-- F-024: real favicon, still a data: URI — an icon FILE would make the
+         browser fire a request outside /ui that (correctly) hits the
+         transparent passthrough → upstream 404. Two stacked frame cards. -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='14' height='6' rx='1.5' fill='%235aa9e6'/%3E%3Crect x='1' y='9' width='14' height='6' rx='1.5' fill='%238a93a3'/%3E%3C/svg%3E" />
+    <title>Context Composer</title>
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>

@@ -248,6 +248,7 @@ export function App() {
         <h1>context composer</h1>
         <select
           aria-label="conversation"
+          title="switch conversation"
           className="conv-switcher"
           value={loaded?.conv ?? ""}
           onChange={(e) => {
@@ -258,10 +259,11 @@ export function App() {
             void loadConversation(e.target.value);
           }}
         >
+          {/* F-025: options carry id + turns only — the conv-key span beside
+              the switcher is the SINGLE key surface (short prefix, copy-full). */}
           {convs.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.id}
-              {c.key ? ` · ${c.key.slice(0, 24)}` : ""} · {c.turnFrames} turns
+              {c.id} · {c.turnFrames} turns
               {c.active ? " · active" : ""}
             </option>
           ))}
@@ -282,6 +284,7 @@ export function App() {
               type="button"
               className="copy-key"
               aria-label="copy conversation key"
+              title="copy the full conversation key"
               onClick={() => {
                 copyText(activeKey ?? loaded.conv);
                 setCopied(true);
@@ -293,10 +296,12 @@ export function App() {
           </span>
         )}
         <div className="view-toggle" role="tablist">
+          {/* F-021: every control explains itself on hover. */}
           <button
             role="tab"
             aria-selected={view === "conversation"}
             className={view === "conversation" ? "on" : ""}
+            title="chat rendering of what the model currently sees (the emission)"
             onClick={() => switchView("conversation")}
           >
             conversation
@@ -305,6 +310,7 @@ export function App() {
             role="tab"
             aria-selected={view === "frames"}
             className={view === "frames" ? "on" : ""}
+            title="the manipulation surface — every frame as a card with its ops menu"
             onClick={() => switchView("frames")}
           >
             frames
@@ -313,6 +319,7 @@ export function App() {
             role="tab"
             aria-selected={view === "history"}
             className={view === "history" ? "on" : ""}
+            title="commit log (with diffs and click-to-revert) and the full audit timeline"
             onClick={() => switchView("history")}
           >
             history
@@ -321,14 +328,23 @@ export function App() {
         {loaded && (
           <div className="store-ops">
             {/* Store-scoped ops (arity none) live in the topbar, not on cards. */}
-            <button className="op-add" onClick={() => pickOp(addOp, [])}>
+            <button
+              className="op-add"
+              title="insert a new frame into the context (op: add)"
+              onClick={() => pickOp(addOp, [])}
+            >
               add frame
             </button>
-            <button className="op-revert" onClick={() => pickOp(revertOp, [])}>
+            <button
+              className="op-revert"
+              title="undo the most recent operation (op: revert)"
+              onClick={() => pickOp(revertOp, [])}
+            >
               revert last
             </button>
             <button
               className={`op-combine ${combineMode ? "on" : ""}`}
+              title="select multiple frames in the frame view to merge into one (op: combine)"
               onClick={() => {
                 setCombineMode((m) => !m);
                 setCombineIds([]);
@@ -340,6 +356,7 @@ export function App() {
               <button
                 className="op-combine-run"
                 disabled={combineIds.length < 2}
+                title="merge the selected frames into one, in selection order"
                 onClick={() => void runOp(combineOp, combineIds, {})}
               >
                 combine {combineIds.length} selected
@@ -349,6 +366,7 @@ export function App() {
         )}
         <button
           className="refresh"
+          title="re-fetch frames, compose, history and timeline from the daemon (also happens on window focus)"
           onClick={() => void loadConversation(loaded?.conv)}
         >
           refresh
