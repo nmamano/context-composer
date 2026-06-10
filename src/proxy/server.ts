@@ -26,6 +26,7 @@ import {
   compactPrompt,
   envLlmClient,
   parseRetitleOutput,
+  regenUnavailable,
   retitlePrompt,
   summarizePrompt,
   type LlmClient,
@@ -287,7 +288,7 @@ export function startProxy(opts: {
         let result;
         if (op === "compact" && parsed.regen) {
           if (!llm) {
-            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --text" }, 400);
+            return json({ error: regenUnavailable("--text") }, 400);
           }
           const rendered = regenInput(store, parsed.id);
           if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);
@@ -334,7 +335,7 @@ export function startProxy(opts: {
         let text = parsed.text;
         if (parsed.regen) {
           if (!llm) {
-            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --text" }, 400);
+            return json({ error: regenUnavailable("--text") }, 400);
           }
           const rendered = regenInput(store, parsed.id);
           if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);
@@ -364,7 +365,7 @@ export function startProxy(opts: {
         let summary = parsed.summary;
         if (parsed.regen) {
           if (!llm) {
-            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --title" }, 400);
+            return json({ error: regenUnavailable("--title") }, 400);
           }
           const rendered = regenInput(store, parsed.id);
           if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);

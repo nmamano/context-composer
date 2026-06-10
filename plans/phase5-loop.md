@@ -1,5 +1,11 @@
 # Phase 5 loop — standing orders + slice handoffs (UI, single-branch first)
 
+> **LOOP COMPLETE (2026-06-10):** all four slices shipped — 5a `5b18570`,
+> 5b `089d175`, 5c `ca2d120`, 5d (this commit) — each through the full
+> plan-review → gates → diff-review → sign-off process, zero unresolved
+> findings. design.md §11 Phase 5 Status carries the evidence. Next up
+> (parked, Nil's call): Phase 4 branching, `send` from the UI, head ops.
+
 Durable instruction set for the `/loop` run implementing the dual-view UI.
 **Re-read this file at the start of every iteration** — it survives context
 compaction and session restarts; the conversation does not. The Phase 3 loop
@@ -99,7 +105,7 @@ available: system Google Chrome 145 + Playwright 1.60 via bunx):
   real TUI session + browser on one daemon, surgery from the browser
   (delete/edit/offload something), next TUI turn reflects it
   (wiretap-verified), session healthy. Update design.md §11 Phase 5 status.
-- [ ] 5d (optional, Nil-requested) — REGEN VIA SUBSCRIPTION. Swap/extend the
+- [x] 5d (optional, Nil-requested) — REGEN VIA SUBSCRIPTION. Swap/extend the
   LlmClient default with a subscription-backed implementation (the Isomux
   pattern): drive `claude -p` (or the Agent SDK) as a subprocess so
   compact/summarize/retitle --regen use Nil's subscription instead of an API
@@ -522,3 +528,116 @@ extended dual-client live beat and update design.md §11 Phase 5 Status.
   inspiration.
 - 5b surfaces: ops.ts revert spec, App runOp/banner, ui-smoke op section
   (append history section), dual-client-smoke.ts surgery mode (extend).
+
+---
+
+## PHASE 5d PICKUP (regen via subscription — optional, Nil-requested)
+
+Repo: /home/nil/nil/context-composer (TS on Bun), branch master.
+Baseline at authoring time: master @ ca2d120 (5a–5c complete: the full
+single-branch dual-view UI, reviewer-signed throughout; §11 Phase 5 Status
+written).
+
+### What 5c learned (fold into this slice)
+
+- Column flexbox + overflow:hidden silently squashes children — flex-shrink:0
+  any new fixed chrome.
+- Tab clicks can race refetch re-renders — ui-smoke's switchTab helper is the
+  pattern for any new tab interactions.
+- ui-smoke's op section PREMISE is "control ops are quota-free because regen
+  REFUSES" — 5d must not break it: the smoke daemon's env scrub must also
+  unset the NEW subscription-gate variables.
+
+### Goal
+
+The 3d LLM port gains a SUBSCRIPTION-BACKED implementation (the Isomux
+pattern): drive the local `claude` CLI in print mode as a subprocess so
+compact/summarize/retitle --regen run on Nil's subscription instead of an
+API key. Server-layer only — the FrameStore stays deterministic (text in,
+same manual op path), stub tests unchanged, gates never need a key OR a
+subscription. EXPLICITLY env-gated (no silent quota burn), quota burn
+documented.
+
+### Load-bearing mechanics
+
+1. **THE PORT IS THE SEAM (3d boundary rules, llm.ts header):** the new
+   client is just another LlmClient. A failed/unconfigured regen still fails
+   BEFORE any store mutation; refusal text stays actionable (mention BOTH
+   config paths). No store/compose/reconcile changes whatsoever.
+2. **EXPLICIT GATE, PRECEDENCE DECIDED WITH REVIEWER:** proposal —
+   `CC_LLM_CLAUDE_CLI=1` opts in to the subprocess client; an API key config
+   (CC_LLM_API_KEY+CC_LLM_MODEL) takes precedence when both are set;
+   `CC_CLAUDE_BIN` overrides the binary path (default `claude` on PATH);
+   optional `CC_LLM_CLI_MODEL` → `--model`. envLlmClient() stays the single
+   factory (server code untouched except none). Never auto-activate just
+   because the CLI exists on PATH — silent quota burn is the failure mode.
+3. **SUBPROCESS DISCIPLINE:** prompt via STDIN (argv length limits + ps
+   exposure), `claude -p` non-interactive print mode, no permission surface
+   (regen prompts are pure-text completion — pass flags that keep the run
+   tool-less/headless; decide exact flag set with reviewer), hard timeout
+   (default ~120s) with kill + clear error, stderr captured into the error.
+   maxTokens cannot map to a CLI flag — prompts already instruct brevity;
+   document the mismatch at the seam.
+4. **DETERMINISM CARE:** temperature isn't controllable via `claude -p` —
+   regen output may churn more than the API client. Acceptable for 5d
+   (regen is explicitly user-commanded); note it in the seam docs.
+5. **TESTS WITHOUT QUOTA:** unit tests drive the subprocess client against a
+   STUB executable (a tiny script echoing canned output; CC_CLAUDE_BIN
+   points at it) — covers prompt-on-stdin, output trim, timeout kill, error
+   propagation, gate precedence (API > CLI > null). Default bun test burns
+   nothing.
+6. **SMOKE SCRUB EXTENDED:** ui-smoke.sh + dual-client-smoke.sh `env -u`
+   lists gain the new variables; the regen-refusal check in ui:smoke keeps
+   passing (it asserts the daemon's refusal text).
+7. **LIVE GATE (small, explicit quota):** one scripted live-regen check —
+   fresh daemon on its own port/store seeded with the committed fixture +
+   CC_LLM_CLAUDE_CLI=1, run `ctx retitle <frame> --regen` and ONE browser
+   regen click (retitle form, regen checkbox) → title/summary actually
+   regenerate (API oracle), store commits normally, no daemon-path changes.
+   ~2 subscription completions total; document the burn in the script header.
+
+### Acceptance
+
+1. With CC_LLM_CLAUDE_CLI=1 (and no API key): compact/summarize/retitle
+   --regen complete via the subscription CLI — from ctx AND from the UI's
+   regen checkbox — producing committed text ops (store deterministic).
+2. With neither config: the refusal names both paths ("set CC_LLM_API_KEY+
+   CC_LLM_MODEL, set CC_LLM_CLAUDE_CLI=1, or use --text").
+3. With both: the API client wins (precedence test).
+4. Stub-executable unit tests cover success/trim/timeout/error/precedence;
+   bun test needs no key, no subscription, no network.
+5. ui:smoke (scrubbed) still passes — regen refusal intact.
+6. Live-regen script passes with ~2 completions; engine gates all green.
+7. Quota burn documented (script header + llm.ts seam comment + this file).
+
+### Decide with reviewer (open, not locked)
+
+- Gate/precedence shape (mechanic #2) and exact env names.
+- The headless flag set for `claude -p` (model/permission/output flags; no
+  tools needed for a pure completion — what is the minimal safe invocation).
+- Client home: engine/llm.ts beside envLlmClient (proposal — it IS the port's
+  home and stays DOM/server-free) vs a separate module.
+- Whether the live-regen check becomes a standing per-slice gate or a
+  5d-only validation (proposal: 5d-only; regen paths are frozen after this).
+
+### Locked — don't relitigate
+
+- Store determinism boundary (3d): LLM text flows through the SAME manual op
+  path; failure before mutation. No engine changes.
+- No silent activation; no default model ids; gates stay key-free and
+  subscription-free by default.
+- UI: zero new surfaces — the regen checkbox already exists (5b); only the
+  daemon's capability changes.
+- Scope guard: the subprocess client + gating + tests + scrubs + live check
+  + docs ONLY. No streaming, no caching of regen results, no new routes, no
+  Phase 4/6 work.
+
+### Resources
+
+- engine/llm.ts (the port + prompts + parseRetitleOutput; this slice's home).
+- proxy/server.ts regen call sites (compact/summarize/retitle — unchanged,
+  they consume the port).
+- Isomux subscription-subprocess pattern (the named precedent).
+- 5a TUI smoke mechanics if the live check needs a real store (it doesn't —
+  the committed fixture suffices).
+- ui-smoke.sh / dual-client-smoke.sh env -u lines (extend).

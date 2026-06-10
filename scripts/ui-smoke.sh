@@ -32,7 +32,7 @@ echo "[ui-smoke] starting smoke daemon on :$PORT (own store/wiretap/frames; LLM 
 # env -u CC_LLM_*: regen must be UNAVAILABLE in this gate so regen clicks are
 # daemon refusals, never upstream LLM calls — keeps the op smoke quota-free
 # (§11 Phase 5b reviewer guardrail).
-env -u CC_LLM_API_KEY -u CC_LLM_MODEL \
+env -u CC_LLM_API_KEY -u CC_LLM_MODEL -u CC_LLM_CLAUDE_CLI -u CC_CLAUDE_BIN -u CC_LLM_CLI_MODEL -u CC_LLM_CLI_TIMEOUT_MS \
 CC_PROXY_PORT="$PORT" \
 CC_STORE_PATH="$SMOKE_DIR/store.json" \
 CC_WIRETAP_PATH="$SMOKE_DIR/wiretap.jsonl" \
