@@ -21,6 +21,15 @@ import type { Commit } from "../engine/commit-graph.ts";
 import type { ContextEvent } from "../engine/event-log.ts";
 import { forward, passthrough } from "./forward.ts";
 import { redactHeaders, Wiretap } from "./wiretap.ts";
+import {
+  compactPrompt,
+  envLlmClient,
+  parseRetitleOutput,
+  retitlePrompt,
+  summarizePrompt,
+  type LlmClient,
+} from "../engine/llm.ts";
+import { renderFrameMarkdown } from "../engine/offload.ts";
 
 export interface ProxyHandle {
   /** The ACTIVE conversation's store (the curated main thread) — the single-store
@@ -74,8 +83,21 @@ export function startProxy(opts: {
   wiretapPath?: string;
   /** Offload artifact dir (§11 Phase 3b). Omit for the config default; tests pass a tmp dir. */
   framesDir?: string;
+  /** LLM port for --regen ops (§11 Phase 3d). Omit for the env default
+   *  (CC_LLM_API_KEY + CC_LLM_MODEL, or null = regen unavailable with a clear
+   *  error). Tests inject a deterministic stub — gates never need a key. */
+  llm?: LlmClient | null;
 } = {}): ProxyHandle {
   const registry = new ConversationRegistry(opts.storePath ?? null, opts.framesDir);
+  const llm = opts.llm !== undefined ? opts.llm : envLlmClient();
+  /** Render a frame's CURRENT emission for a regen prompt; null if no frame.
+   *  The LLM is called BEFORE any store op — a failed/unconfigured regen never
+   *  mutates state (reviewer point C). */
+  const regenInput = (store: FrameStore, id: string): string | null => {
+    const f = store.show(id);
+    if (!f) return null;
+    return renderFrameMarkdown(f.id, f.title, f.representation ?? f.messages);
+  };
   const wiretap = opts.wiretapPath ? new Wiretap(opts.wiretapPath) : null;
   // Tracks the in-flight response capture so control reads observe a consistent
   // state (e.g. `ctx list` right after a send reflects the captured assistant).
@@ -251,24 +273,108 @@ export function startProxy(opts: {
       // §11 Phase 3a content ops: representation overrides. `text` = single
       // message carrying the frame opener's role; `raw` = full authorship of the
       // emitted messages array (advanced; the §5.F sweep keeps the wire valid).
+      // §11 Phase 3d: compact gains --regen via the LLM port.
       if ((path === "/control/edit" || path === "/control/compact") && req.method === "POST") {
         const parsed = (await req.json().catch(() => null)) as
-          | { id?: string; text?: string; raw?: unknown }
+          | { id?: string; text?: string; raw?: unknown; regen?: boolean }
           | null;
         if (!parsed?.id) return json({ error: "missing id" }, 400);
         const op = path === "/control/edit" ? "edit" : "compact";
         let result;
-        if (typeof parsed.text === "string") {
+        if (op === "compact" && parsed.regen) {
+          if (!llm) {
+            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --text" }, 400);
+          }
+          const rendered = regenInput(store, parsed.id);
+          if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);
+          let text;
+          try {
+            text = await llm.complete(compactPrompt(rendered));
+          } catch (err) {
+            return json({ error: `regen failed: ${String(err)}` }, 502);
+          }
+          result = store.compact(parsed.id, { text });
+        } else if (typeof parsed.text === "string") {
           result = store[op](parsed.id, { text: parsed.text });
         } else if (op === "edit" && parsed.raw !== undefined) {
           // Shape is validated inside store.edit (clean 400 on a bad payload).
           result = store.edit(parsed.id, { raw: parsed.raw as WireMessage[] });
         } else {
           return json(
-            { error: op === "edit" ? "provide text or raw" : "provide text (compact --regen lands in 3d)" },
+            { error: op === "edit" ? "provide text or raw" : "provide text or regen" },
             400,
           );
         }
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      // §11 Phase 3d sub-frame content ops.
+      if (path === "/control/strip" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; resultIds?: string[]; all?: boolean }
+          | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        const result = store.strip(parsed.id, { resultIds: parsed.resultIds, all: parsed.all });
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/summarize" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; resultIds?: string[]; all?: boolean; text?: string; regen?: boolean }
+          | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        let text = parsed.text;
+        if (parsed.regen) {
+          if (!llm) {
+            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --text" }, 400);
+          }
+          const rendered = regenInput(store, parsed.id);
+          if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);
+          try {
+            text = await llm.complete(summarizePrompt(rendered));
+          } catch (err) {
+            return json({ error: `regen failed: ${String(err)}` }, 502);
+          }
+        }
+        if (typeof text !== "string") return json({ error: "provide text or regen" }, 400);
+        const result = store.summarizeResults(
+          parsed.id,
+          { resultIds: parsed.resultIds, all: parsed.all },
+          text,
+        );
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/retitle" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; title?: string; summary?: string; regen?: boolean }
+          | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        let title = parsed.title;
+        let summary = parsed.summary;
+        if (parsed.regen) {
+          if (!llm) {
+            return json({ error: "regen unavailable: set CC_LLM_API_KEY + CC_LLM_MODEL or use --title" }, 400);
+          }
+          const rendered = regenInput(store, parsed.id);
+          if (!rendered) return json({ error: `no frame ${parsed.id}` }, 404);
+          // §11 3d acceptance: regen produces BOTH title and summary (two-line
+          // contract). Explicit --title/--summary alongside --regen win.
+          try {
+            const gen = parseRetitleOutput(await llm.complete(retitlePrompt(rendered), 128));
+            title = title ?? gen.title;
+            summary = summary ?? gen.summary ?? undefined;
+          } catch (err) {
+            return json({ error: `regen failed: ${String(err)}` }, 502);
+          }
+        }
+        const result = store.retitle(parsed.id, { title, summary });
         return result.ok
           ? json({ conv: conv.id, commit: publicCommit(result.commit) })
           : json({ error: result.error }, 400);

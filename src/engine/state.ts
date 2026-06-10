@@ -45,6 +45,8 @@ export interface FrameSummary {
   kind: Frame["kind"];
   role: Frame["role"];
   title: string;
+  /** §11 Phase 3d — display summary (user-set or regenerated; metadata only). */
+  summary: string | null;
   tokenEstimate: number;
   deleted: boolean;
   messageCount: number;
@@ -396,6 +398,7 @@ export class FrameStore {
       kind: f.kind,
       role: f.role,
       title: f.title,
+      summary: f.summary ?? null,
       tokenEstimate: f.tokenEstimate,
       deleted: f.deleted,
       messageCount: f.messages.length,
@@ -717,6 +720,127 @@ export class FrameStore {
     return { ok: true, commit };
   }
 
+  // ---- §11 Phase 3d sub-frame content ops ----
+
+  /** `strip` (§5.C): remove tool-result BLOAT inside a frame while keeping the
+   *  reasoning AND the tool structure. Semantics (reviewer point A): the
+   *  targeted tool_result blocks keep type/tool_use_id/is_error — only their
+   *  `content` is replaced with a short stub note, so the tool_use/result pair
+   *  stays intact and the §5.F sweep remains a safety net, not the mechanism. */
+  strip(id: string, target: { resultIds?: string[]; all?: boolean }): OpResult {
+    return this.transformResults("strip", id, target, "[stripped by user]");
+  }
+
+  /** `summarize` (§5.C): same transform as strip with a user/LLM summary as the
+   *  replacement. Multi-result semantics: ONE summary repeated across every
+   *  selected result (3d simplicity, reviewer point D). The LLM lives at the
+   *  proxy layer (`--regen`); the store only ever receives text — deterministic. */
+  summarizeResults(
+    id: string,
+    target: { resultIds?: string[]; all?: boolean },
+    text: string,
+  ): OpResult {
+    return this.transformResults("summarize", id, target, text);
+  }
+
+  private transformResults(
+    type: "strip" | "summarize",
+    id: string,
+    target: { resultIds?: string[]; all?: boolean },
+    replacement: string,
+  ): OpResult {
+    // Content-op guards: deleted/offloaded/absorbed/split-original/preamble
+    // refuse; added/combined/split-child frames are ordinary emitting content.
+    const t = this.opTarget(id, type);
+    if (!t.ok) return t;
+    const f = t.frame;
+
+    const emission = structuredClone(f.representation ?? f.messages);
+    const wanted = target.all ? null : new Set(target.resultIds ?? []);
+    if (wanted && wanted.size === 0) {
+      return { ok: false, error: `${type} needs --result <tool_use_id...> or --all-results` };
+    }
+    // Duplicate tool_use_ids in a raw-authored representation: ALL matching
+    // blocks transform deterministically; params record ids + block count.
+    const affected: string[] = [];
+    let blocks = 0;
+    for (const m of emission) {
+      if (typeof m.content === "string") continue;
+      for (let i = 0; i < m.content.length; i++) {
+        const b = m.content[i]!;
+        if (b.type !== "tool_result" || typeof b.tool_use_id !== "string") continue;
+        if (wanted && !wanted.has(b.tool_use_id)) continue;
+        m.content[i] = { ...b, content: replacement }; // ONLY content changes
+        affected.push(b.tool_use_id);
+        blocks++;
+      }
+    }
+    // No-mutation refusals: zero matches, or any requested id unmatched.
+    if (blocks === 0) {
+      return {
+        ok: false,
+        error: target.all
+          ? `frame ${id} has no tool_result blocks`
+          : `frame ${id} has no tool_result matching ${[...wanted!].join(", ")} — nothing changed`,
+      };
+    }
+    if (wanted) {
+      const found = new Set(affected);
+      const missing = [...wanted].filter((x) => !found.has(x));
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          error: `frame ${id} has no tool_result matching ${missing.join(", ")} — nothing changed`,
+        };
+      }
+    }
+
+    const before = f.representation ? structuredClone(f.representation) : null;
+    const commit = this.makeCommit(
+      type,
+      [id],
+      { before, after: structuredClone(emission), resultIds: affected, blocks },
+      `${type} ${id} (${blocks} result block(s))`,
+    );
+    f.representation = emission;
+    f.tokenEstimate = this.effectiveTokens(f);
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent(type, [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** `retitle` (§5.C): set/replace display metadata (title + §7 summary). PURE
+   *  metadata — never touches emission, head hash, or tokens — so it is allowed
+   *  on ANY non-deleted frame: preamble, offloaded, absorbed parts, split
+   *  originals, structural products (helps label hidden frames). */
+  retitle(id: string, opts: { title?: string; summary?: string }): OpResult {
+    if (opts.title === undefined && opts.summary === undefined) {
+      return { ok: false, error: "retitle needs --title and/or --summary" };
+    }
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (f.deleted) {
+      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
+    }
+    const before = { title: f.title, summary: f.summary ?? null };
+    const after = {
+      title: opts.title ?? f.title,
+      summary: opts.summary !== undefined ? opts.summary : (f.summary ?? null),
+    };
+    const commit = this.makeCommit("retitle", [id], { before, after }, `retitle ${id}`);
+    f.title = after.title;
+    f.summary = after.summary;
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent("retitle", [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
   /** The commit that established a frame's CURRENT offload: its most recent
    *  `offload` commit. Valid lookup because offloaded frames refuse edit/compact
    *  and (below) refuse reverts of other content commits — so while offloaded,
@@ -929,6 +1053,7 @@ export class FrameStore {
     }
     const revertible = [
       "delete", "edit", "compact", "offload", "restore", "add", "move", "combine", "split",
+      "strip", "summarize", "retitle",
     ];
     if (!revertible.includes(target.type)) {
       return {
@@ -946,8 +1071,10 @@ export class FrameStore {
         error: `cannot revert ${target.id}: frame(s) ${missing.join(", ")} no longer exist`,
       };
     }
-    if (target.type !== "delete") {
-      // Structural-state coherence guards (3b pattern, generalized for 3c):
+    if (target.type !== "delete" && target.type !== "retitle") {
+      // Structural-state coherence guards (3b pattern, generalized for 3c).
+      // delete AND retitle are exempt: neither touches representation or
+      // structural metadata (tombstone / display metadata only).
       // while a frame is offloaded/absorbed/split, only the commit that
       // ESTABLISHED that state may be reverted — anything else would swap the
       // emission or metadata out from under the active structure.
@@ -1056,6 +1183,12 @@ export class FrameStore {
       } else if (target.type === "move") {
         const params = target.params as { before?: { after: string | null } | null };
         f.placement = params.before ? { ...params.before } : null;
+      } else if (target.type === "retitle") {
+        const params = target.params as { before?: { title: string; summary: string | null } };
+        if (params.before) {
+          f.title = params.before.title;
+          f.summary = params.before.summary;
+        }
       } else if (target.type === "combine") {
         const { combinedId } = target.params as { combinedId: string };
         if (f.id === combinedId) {

@@ -15,7 +15,8 @@
 
 export type ContextEventType =
   | "capture" | "delete" | "revert" | "edit" | "compact" | "offload" | "restore"
-  | "add" | "move" | "combine" | "split";
+  | "add" | "move" | "combine" | "split"
+  | "strip" | "summarize" | "retitle";
 
 export interface ContextEvent {
   id: string;

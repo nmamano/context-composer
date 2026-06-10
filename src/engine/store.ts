@@ -28,8 +28,10 @@ import type { Frame, RequestEnvelope } from "./types.ts";
 // v3 (§11 Phase 3a): Frame gains the optional `representation` override.
 // v4 (§11 Phase 3b): Frame gains `offloaded` + `fileReference`.
 // v5 (§11 Phase 3c): Frame gains `origin` + `placement` + `absorbedInto` +
-// `splitInto`. No migrations — older stores fail loudly per policy.
-export const SNAPSHOT_VERSION = 5;
+// `splitInto`.
+// v6 (§11 Phase 3d): Frame gains `summary` display metadata. No migrations —
+// older stores fail loudly per policy.
+export const SNAPSHOT_VERSION = 6;
 
 /** The whole durable state. Internal seq fields (createdAt/modifiedAt/seq) live here —
  *  they belong in the store but never on the wire (compose strips them out already). */

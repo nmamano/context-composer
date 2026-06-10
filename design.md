@@ -981,7 +981,22 @@ rule lives or dies on this gate).
     the first part's slot (wiretap emittedFrameIds vs viewFrameIds); the model's
     own recap listed every question EXCEPT the deleted one. Originally:
     structural reshaping.
-  - **3d** `strip`, `summarize`, `retitle` — sub-frame content ops.
+  - **3d** `strip`, `summarize`, `retitle` — **Status: built and live-validated
+    (2026-06-10).** strip/summarize transform the frame's CURRENT emission via
+    the 3a representation machinery: targeted tool_result blocks keep their
+    structure (type/tool_use_id/is_error) and only `content` is replaced (stub
+    note / one summary repeated per selected result) — the tool pair stays
+    intact, the §5.F sweep stays a safety net. retitle is pure display metadata
+    (title + §7 summary; emission byte-identical; allowed on any non-deleted
+    frame incl. the preamble). `engine/llm` lands as an injected PORT at the
+    proxy layer: FrameStore stays deterministic, gates pass with no API key,
+    failed/unconfigured `--regen` mutates nothing; retitle regen uses a
+    two-line title+summary contract; compact --regen (deferred from 3a) rides
+    the same port. Snapshot v6. Live real-TUI: stripped a real Read result
+    mid-session — outbound carried the stub with the 60-line file content gone
+    (2479→2178 tok) while the unaware agent resent it all, and the model
+    answered from its KEPT reasoning ("port 9442, retry 7"). Originally:
+    sub-frame content ops.
 - **Files/modules:** `engine/ops/*` (one module per op), `cli/` (verbs),
   `engine/compose` (per-op resolution), `engine/llm` (compact/summarize/title generation).
 - **Acceptance (per slice):** apply the op via CLI; `ctx compose --dump` shows the resolved

@@ -55,6 +55,7 @@ async function cmdList(args: string[]): Promise<void> {
       kind: string;
       role: string;
       title: string;
+      summary: string | null;
       tokenEstimate: number;
       deleted: boolean;
       messageCount: number;
@@ -85,8 +86,9 @@ async function cmdList(args: string[]): Promise<void> {
       (f.splitInto ? ` [split->${f.splitInto.join(",")}]` : "") +
       (f.inLastView === false ? " [fork-only]" : "");
     if (f.inLastView === false) sawForkOnly = true;
+    const summary = f.summary ? ` — ${f.summary}` : "";
     console.log(
-      `${f.id.padEnd(4)} ${f.kind.padEnd(8)} ${String(f.tokenEstimate).padStart(6)}tok  ${f.title}${flags}`,
+      `${f.id.padEnd(4)} ${f.kind.padEnd(8)} ${String(f.tokenEstimate).padStart(6)}tok  ${f.title}${summary}${flags}`,
     );
   }
   if (hiddenDeleted > 0 && !showAll) {
@@ -132,7 +134,9 @@ async function cmdContentOp(op: "edit" | "compact", args: string[]): Promise<voi
   const textIdx = args.indexOf("--text");
   const rawIdx = args.indexOf("--raw");
   const body: Record<string, unknown> = { id };
-  if (textIdx >= 0 && args[textIdx + 1] !== undefined) {
+  if (op === "compact" && args.includes("--regen")) {
+    body.regen = true; // §11 Phase 3d: LLM-backed via the server's port
+  } else if (textIdx >= 0 && args[textIdx + 1] !== undefined) {
     body.text = args[textIdx + 1];
   } else if (op === "edit" && rawIdx >= 0 && args[rawIdx + 1] !== undefined) {
     try {
@@ -144,7 +148,7 @@ async function cmdContentOp(op: "edit" | "compact", args: string[]): Promise<voi
     fail(
       op === "edit"
         ? "usage: ctx edit <frame> --text <t> | --raw <json>"
-        : "usage: ctx compact <frame> --text <summary>   (--regen lands in 3d)",
+        : "usage: ctx compact <frame> --text <summary> | --regen",
     );
   }
   const result = (await post(`/control/${op}`, body)) as {
@@ -263,6 +267,75 @@ async function cmdSplit(args: string[]): Promise<void> {
   console.log(
     `split ${id} -> ${result.commit!.params.childIds!.join("+")} (commit ${result.commit!.id}, conversation ${result.conv})`,
   );
+}
+
+/** §11 Phase 3d sub-frame ops: strip/summarize target tool_result blocks
+ *  inside a frame (content stubbed/summarized; tool structure preserved);
+ *  retitle is display metadata only. --regen goes through the daemon's LLM
+ *  port (CC_LLM_API_KEY + CC_LLM_MODEL). */
+async function cmdStrip(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx strip <frame> --result <id[,id...]> | --all-results");
+  const body: Record<string, unknown> = { id };
+  const rIdx = args.indexOf("--result");
+  if (rIdx >= 0 && args[rIdx + 1] !== undefined) {
+    body.resultIds = args[rIdx + 1]!.split(",").map((x) => x.trim());
+  } else if (args.includes("--all-results")) {
+    body.all = true;
+  } else fail("usage: ctx strip <frame> --result <id[,id...]> | --all-results");
+  const result = (await post("/control/strip", body)) as {
+    conv?: string;
+    commit?: { id: string; params: { blocks?: number } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `stripped ${result.commit!.params.blocks} result block(s) in ${id} (commit ${result.commit!.id}, conversation ${result.conv})`,
+  );
+}
+
+async function cmdSummarize(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx summarize <frame> [--result <ids>|--all-results] --text <s> | --regen");
+  const body: Record<string, unknown> = { id };
+  const rIdx = args.indexOf("--result");
+  if (rIdx >= 0 && args[rIdx + 1] !== undefined) {
+    body.resultIds = args[rIdx + 1]!.split(",").map((x) => x.trim());
+  } else body.all = true; // default: all results in the frame
+  const tIdx = args.indexOf("--text");
+  if (tIdx >= 0 && args[tIdx + 1] !== undefined) body.text = args[tIdx + 1];
+  else if (args.includes("--regen")) body.regen = true;
+  else fail("usage: ctx summarize <frame> [--result <ids>|--all-results] --text <s> | --regen");
+  const result = (await post("/control/summarize", body)) as {
+    conv?: string;
+    commit?: { id: string; params: { blocks?: number } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `summarized ${result.commit!.params.blocks} result block(s) in ${id} (commit ${result.commit!.id}, conversation ${result.conv})`,
+  );
+}
+
+async function cmdRetitle(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx retitle <frame> --title <t> [--summary <s>] | --regen");
+  const body: Record<string, unknown> = { id };
+  const tIdx = args.indexOf("--title");
+  const sIdx = args.indexOf("--summary");
+  if (tIdx >= 0 && args[tIdx + 1] !== undefined) body.title = args[tIdx + 1];
+  if (sIdx >= 0 && args[sIdx + 1] !== undefined) body.summary = args[sIdx + 1];
+  if (args.includes("--regen")) body.regen = true;
+  if (body.title === undefined && body.summary === undefined && !body.regen) {
+    fail("usage: ctx retitle <frame> --title <t> [--summary <s>] | --regen");
+  }
+  const result = (await post("/control/retitle", body)) as {
+    conv?: string;
+    commit?: { id: string };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(`retitled ${id} (commit ${result.commit!.id}, conversation ${result.conv})`);
 }
 
 async function cmdCompose(args: string[]): Promise<void> {
@@ -398,6 +471,12 @@ async function main(): Promise<void> {
       return cmdCombine(args);
     case "split":
       return cmdSplit(args);
+    case "strip":
+      return cmdStrip(args);
+    case "summarize":
+      return cmdSummarize(args);
+    case "retitle":
+      return cmdRetitle(args);
     case "compose":
       return cmdCompose(args);
     case "history":
@@ -410,7 +489,7 @@ async function main(): Promise<void> {
       return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | strip <id> --result <ids>|--all-results | summarize <id> --text <s>|--regen | retitle <id> --title <t>|--regen | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }

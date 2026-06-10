@@ -31,7 +31,10 @@ export interface Frame {
   // rename this to `placement`/`source` if it persists as metadata.
   kind: "preamble" | "turn";
   role: Role;
-  title: string; // Phase 1: placeholder; LLM titling is deferred (Phase 3).
+  title: string; // placeholder until the user retitles (§11 Phase 3d)
+  /** §11 Phase 3d — display summary (§7), user-set or LLM-regenerated via
+   *  `retitle`. Pure metadata: never emitted, never part of any hash. */
+  summary?: string | null;
 
   // Identity anchor (turn frames). See reconcile.ts.
   anchorFp: string;

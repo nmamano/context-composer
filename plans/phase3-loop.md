@@ -50,7 +50,7 @@ mode — never blanket-bypass, judge via the wiretap not the pane).
 - [x] 3a — edit + compact + §5.F wire-integrity sweep — committed, reviewer-signed-off (see design.md §11 Phase 3a Status)
 - [x] 3b — offload + restore — committed, reviewer-signed-off (see design.md §11 Phase 3b Status)
 - [x] 3c — combine + split + move + add — committed, reviewer-signed-off (see design.md §11 Phase 3c Status)
-- [ ] 3d — strip + summarize + retitle (handoff after 3c)
+- [x] 3d — strip + summarize + retitle — committed, reviewer-signed-off (see design.md §11 Phase 3d Status). PHASE 3 COMPLETE.
 
 ---
 
@@ -295,3 +295,59 @@ layers, preserving every locked invariant:
 - Same guards pattern: preamble refuses structural ops (deferred phrasing);
   offloaded frames refuse combine/split/move (restore first — coherence);
   deleted frames refuse all ops except revert.
+
+---
+
+## PHASE 3d PICKUP (strip + summarize + retitle — sub-frame content ops)
+
+Baseline at authoring time: master @ ea36cb6 (3a+3b+3c committed).
+
+### Goal
+
+design.md §5.C / §11 3d: the finer-grained content toolkit. `strip` removes
+tool-result bloat inside a frame while keeping the reasoning; `summarize`
+compresses sub-parts in place; `retitle` sets/regenerates display metadata.
+Also lands `engine/llm` — the pluggable LLM port that backs `--regen` here and
+retro-fits `compact --regen` (deferred from 3a).
+
+### Mechanics (all on 3a machinery — content ops over representations)
+
+1. strip/summarize ARE representation overrides: new representation =
+   transform(current emission). Commits {before, after}; revert free via 3a.
+2. STRIP semantics (decide w/ reviewer): replace targeted tool_result CONTENT
+   with a short stub note ("[stripped by user]") rather than removing the
+   block — keeps the tool_use/tool_result pair intact (no reliance on the
+   sweep, no reasoning loss; the §5.F sweep remains the safety net, not the
+   mechanism). --result <tool_use_id...> | --all-results.
+3. SUMMARIZE --results: replace tool_result contents with a summary — manual
+   --text deterministic path; --regen via the LLM port.
+4. RETITLE: metadata-only (Frame gains `summary?: string`; title was a
+   placeholder since Phase 1). Never touches emission/head-hash. Allowed on
+   offloaded/absorbed frames? (metadata only — propose yes; reviewer call.)
+5. engine/llm: a PORT (interface LlmClient { complete(prompt): Promise<string> }).
+   Server-side, injected via startProxy opts (tests pass a stub — gates stay
+   deterministic, no key dependency). Default impl reads CC_LLM_API_KEY +
+   CC_LLM_MODEL env; --regen without them = clear error, op falls back to
+   manual. compact --regen wired through the same port.
+6. SNAPSHOT_VERSION 5→6 (Frame.summary). Commit/event types extended.
+
+### Acceptance (design.md §11 3d)
+
+- `ctx strip <frame> --result <id>` → dump shows that result stubbed while the
+  turn's reasoning + tool_use remain; live send 200.
+- `ctx summarize <frame> --results --text <s>` → results replaced by the
+  shorter summary in the dump; --regen produces one via the LLM port (stubbed
+  in tests; live optional if env key present).
+- `ctx retitle <frame> --title <t>` → list shows the new title; composed
+  payload byte-unchanged (head-hash + body hash stable).
+- revert works on all three; guards follow the established pattern.
+- Live TUI smoke: real tool-use turn → strip the tool result mid-session →
+  next turn's wire carries the stub, session healthy, model still references
+  its reasoning.
+
+### Locked / scope guard
+
+- No automatic summarization; everything opt-in per frame. No UI. LLM via the
+  port only — never hardwired; gates must pass with no API key configured.
+- reconcile untouched; same coherence guards (offloaded/absorbed/split refuse
+  strip/summarize like edit; retitle per the decided rule).
