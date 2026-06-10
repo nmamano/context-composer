@@ -11,15 +11,44 @@
 import { useEffect, useRef, useState } from "react";
 import type { OpSpec, ParamSpec } from "../../../src/shared/ops.ts";
 import { singleTargetOps } from "../../../src/shared/ops.ts";
+import type { FrameSummary } from "../../../src/engine/state.ts";
 
 export type FormValues = Record<string, string | boolean | undefined>;
 
 function ParamField(props: {
   spec: ParamSpec;
+  verb: string;
   value: string | boolean | undefined;
   onChange: (v: string | boolean) => void;
+  /** F-039: position params render as a dropdown fed by the loaded frames. */
+  frames?: FrameSummary[];
 }) {
   const { spec } = props;
+  // F-039 (plans/ui-feedback.md): the free-text position field was ambiguous
+  // (before or after the id?) — a dropdown makes the AFTER semantics explicit.
+  // Values stay exactly what build()/position() expect: "" = end (omitted),
+  // "start" = after:null, otherwise a frame id (after that frame).
+  if (spec.kind === "position") {
+    return (
+      <label className="op-param">
+        insert position
+        <select
+          value={typeof props.value === "string" ? props.value : ""}
+          onChange={(e) => props.onChange(e.target.value)}
+        >
+          <option value="">
+            {props.verb === "add" ? "at the end" : "(pick a position)"}
+          </option>
+          <option value="start">at the start</option>
+          {props.frames?.map((f) => (
+            <option key={f.id} value={f.id}>
+              after {f.id} — {f.title.slice(0, 40)}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
   if (spec.kind === "flag") {
     return (
       <label className="op-param op-flag">
@@ -63,6 +92,8 @@ export function OpForm(props: {
   /** F-003: prefilled values (previews of engine defaults — see prefill.ts).
    *  The caller keys this component so a new target remounts with fresh state. */
   initial?: FormValues;
+  /** F-039: loaded frames feed the position dropdown. */
+  frames?: FrameSummary[];
   /** Presence-gating only: required params must be non-empty before POST. */
   onSubmit: (values: FormValues) => void;
   onCancel: () => void;
@@ -89,13 +120,17 @@ export function OpForm(props: {
         <ParamField
           key={p.key}
           spec={p}
+          verb={props.op.verb}
+          frames={props.frames}
           value={values[p.key]}
           onChange={(v) => setValues((prev) => ({ ...prev, [p.key]: v }))}
         />
       ))}
       <div className="op-form-actions">
-        <button type="submit" disabled={missing.length > 0}>
-          run {props.op.verb}
+        {/* F-040: bare verb + filled "primary" styling — the committing action
+            reads as definitive; cancel stays the neutral outline. */}
+        <button type="submit" className="primary" disabled={missing.length > 0}>
+          {props.op.verb}
         </button>
         <button type="button" onClick={props.onCancel}>
           cancel

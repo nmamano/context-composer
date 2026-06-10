@@ -44,7 +44,7 @@ export function FrameView(props: {
       <div className="store-ops frame-toolbar">
         <button
           className="op-add"
-          data-tip="insert a new block of text into the conversation"
+          data-tip="insert text anywhere in the context"
           onClick={() => props.onAddFrame?.()}
         >
           add frame
@@ -59,20 +59,13 @@ export function FrameView(props: {
         <button
           className={`op-combine ${props.combineMode ? "on" : ""}`}
           data-tip="merge several frames into one"
-          onClick={() => props.onToggleCombineMode?.()}
+          onClick={() => {
+            // F-042: open-only — cancel lives inside the panel below.
+            if (!props.combineMode) props.onToggleCombineMode?.();
+          }}
         >
-          {props.combineMode ? "cancel combine" : "combine"}
+          combine
         </button>
-        {props.combineMode && (
-          <button
-            className="op-combine-run"
-            disabled={props.combineIds.length < 2}
-            data-tip="merge the selected frames, in selection order"
-            onClick={() => props.onRunCombine?.()}
-          >
-            combine {props.combineIds.length} selected
-          </button>
-        )}
         {forkCount > 0 && (
           <label
             className="fork-toggle"
@@ -87,6 +80,34 @@ export function FrameView(props: {
           </label>
         )}
       </div>
+      {/* F-042: combine gets the same panel treatment as the other toolbar
+          ops — explainer + committing action + cancel INSIDE the panel.
+          F-041: the copy states the actual semantics (engine combine():
+          contents joined as-is in pick order, no LLM; the result takes the
+          first picked frame's slot). */}
+      {props.combineMode && (
+        <div className="op-form-host toolbar combine-panel">
+          <header>combine</header>
+          <p className="combine-explainer">
+            Tick 2 or more frames below, in the order they should be joined.
+            Their text is kept as-is (no AI rewriting); the combined frame
+            takes the place of the first one you pick.
+          </p>
+          <div className="op-form-actions">
+            <button
+              type="button"
+              className="op-combine-run primary"
+              disabled={props.combineIds.length < 2}
+              onClick={() => props.onRunCombine?.()}
+            >
+              combine {props.combineIds.length} selected
+            </button>
+            <button type="button" onClick={() => props.onToggleCombineMode?.()}>
+              cancel
+            </button>
+          </div>
+        </div>
+      )}
       {props.toolbarForm}
       {props.frames.length === 0 && <p className="empty">no frames yet</p>}
       {visible.map((f) => {

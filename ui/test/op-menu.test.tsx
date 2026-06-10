@@ -175,6 +175,13 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function setSelectValue(el: HTMLSelectElement, value: string) {
+  const proto = Object.getPrototypeOf(el) as object;
+  const desc = Object.getOwnPropertyDescriptor(proto, "value")!;
+  desc.set!.call(el, value);
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 test("op menu is GENERATED from the registry — every single-target verb, nothing else", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
@@ -337,15 +344,24 @@ test("revert(last) from the frames toolbar POSTs {} to /control/revert with expl
   expect(posts[0]!.body).toEqual({});
 });
 
-test("add: explicit position mapping (start → after:null) via the frames-toolbar form", async () => {
+test("add: F-039 position DROPDOWN maps start → after:null; frames listed as 'after <id>'", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   await act(async () => click(container.querySelector(".store-ops .op-add")!));
   const form = container.querySelector('.op-form[data-op="add"]')!;
+  // F-040: the committing button is the bare verb, styled primary.
+  const submit = form.querySelector('button[type="submit"]')!;
+  expect(submit.textContent).toBe("add");
+  expect(submit.classList.contains("primary")).toBe(true);
   const ta = form.querySelector("textarea") as HTMLTextAreaElement;
   await act(async () => setNativeValue(ta, "injected note"));
-  const pos = form.querySelector('input[type="text"]') as HTMLInputElement;
-  await act(async () => setNativeValue(pos, "start"));
+  // F-039: explicit AFTER semantics in a dropdown — default end, start, per-frame.
+  const pos = form.querySelector("select") as HTMLSelectElement;
+  const labels = Array.from(pos.options).map((o) => o.textContent);
+  expect(labels[0]).toBe("at the end");
+  expect(labels[1]).toBe("at the start");
+  expect(labels.some((l) => l!.startsWith("after f1"))).toBe(true);
+  await act(async () => setSelectValue(pos, "start"));
   await act(async () => click(form.querySelector('button[type="submit"]')!));
   for (let i = 0; i < 4; i++) {
     await act(async () => {
@@ -354,6 +370,31 @@ test("add: explicit position mapping (start → after:null) via the frames-toolb
   }
   expect(posts).toHaveLength(1);
   expect(posts[0]!.body).toEqual({ text: "injected note", after: null });
+});
+
+test("F-042: combine opens a panel with cancel inside; toolbar ops are mutually exclusive", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  // Combine opens its panel (explainer + run + cancel) — F-041 copy present.
+  await act(async () => click(container.querySelector(".store-ops .op-combine")!));
+  const panel = container.querySelector(".combine-panel")!;
+  expect(panel).not.toBeNull();
+  expect(panel.textContent).toContain("no AI rewriting");
+  expect(panel.querySelector(".op-combine-run")).not.toBeNull();
+  // Opening ADD auto-cancels combine (mutual exclusion)…
+  await act(async () => click(container.querySelector(".store-ops .op-add")!));
+  expect(container.querySelector(".combine-panel")).toBeNull();
+  expect(container.querySelector('.op-form[data-op="add"]')).not.toBeNull();
+  // …and opening combine auto-cancels the pending add form.
+  await act(async () => click(container.querySelector(".store-ops .op-combine")!));
+  expect(container.querySelector('.op-form[data-op="add"]')).toBeNull();
+  expect(container.querySelector(".combine-panel")).not.toBeNull();
+  // Cancel INSIDE the panel closes it.
+  const cancel = Array.from(container.querySelectorAll(".combine-panel button")).find(
+    (b) => b.textContent === "cancel",
+  )!;
+  await act(async () => click(cancel));
+  expect(container.querySelector(".combine-panel")).toBeNull();
 });
 
 test("ops are never hidden by frame state (a deleted frame still offers the full menu)", async () => {

@@ -239,6 +239,7 @@ export function App() {
         key={`${pendingOp.op.verb}:${pendingOp.targets.join(",")}`}
         op={pendingOp.op}
         initial={pendingOp.initial}
+        frames={loaded?.frames}
         onSubmit={(values) => void runOp(pendingOp.op, pendingOp.targets, values)}
         onCancel={() => setPendingOp(null)}
       />
@@ -389,9 +390,20 @@ export function App() {
             toolbarForm={toolbarFormActive ? opFormHost : null}
             showForkOnly={showForkOnly}
             onToggleForkOnly={() => setShowForkOnly((s) => !s)}
-            onAddFrame={() => pickOp(addOp, [])}
-            onRevertLast={() => pickOp(revertOp, [])}
+            // F-042: the three toolbar ops are mutually exclusive — opening
+            // one auto-cancels whichever panel is already open.
+            onAddFrame={() => {
+              setCombineMode(false);
+              setCombineIds([]);
+              pickOp(addOp, []);
+            }}
+            onRevertLast={() => {
+              setCombineMode(false);
+              setCombineIds([]);
+              pickOp(revertOp, []);
+            }}
             onToggleCombineMode={() => {
+              setPendingOp(null);
               setCombineMode((m) => !m);
               setCombineIds([]);
             }}

@@ -24,7 +24,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-001 — Frame titles should be auto-generated and auto-populated (not "frame t1" fallback)
 - reported: 2026-06-10 · class: refinement
-- status: plan-approved (engine batch A; implement after the UI batches commit — tree clean between batches)
+- status: fixed@batch-A (reviewer-signed 2026-06-10; all gates incl. live)
 - what: "frames should have auto-generated titles automatically populated, instead of 'frame t1'. there's already 't1' as a left-aligned label. that's good"
 - where: frame view, all frame cards
 - expected: every frame carries a meaningful auto-generated title; the t-id label covers identity already
@@ -38,6 +38,8 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
   5. apply under LATEST-store checks per field (exists, still turn, not deleted, title still placeholder / summary still null); skip per-field, no event if nothing applied.
   6. in-memory non-blocking queue; live-ingest only, NO replay/backfill on store load in this slice.
   7. risk precision: post-F-017 the auto-summary also rides CLI/control offload without --summary (intended; not UI-preview-only).
+- live-gate evidence (2026-06-10, Nil green-lit quota): demo PASS; live-e2e PASS; live-phase2 PASS; dual-client PASS on retry (first attempt was a marker-phrasing flake — turn-1 upstream 200, exact-string marker missing; retry clean) incl. the F-017 stub-on-wire checks. LIVE ENRICHMENT end-to-end on a throwaway daemon (:8812, fresh store): real `claude --model claude-sonnet-4-6 --effort low` call → t1 titled "User asks tallest mountain on Earth" + faithful summary + audited note "title+summary via claude-cli:claude-sonnet-4-6@low" through /control/timeline. The failure path proved itself live too (claude not on the daemon shell's PATH → non-fatal log line, placeholder kept, no event; CC_CLAUDE_BIN fixes it).
+- live-check findings FIXED pre-review: (1) publicEvent route mapper silently dropped the new `note` field → added (+ ui PublicEvent type, + route-level regression assert); (2) head-only input truncation ate the user's real question behind Claude Code's front-loaded skills reminder, making the model describe the enrichment instructions themselves → head+tail truncation (2000+3500) + prompt hardening (never describe the instructions; "background context" fallback for boilerplate-only turns) + regression test.
 
 ## F-002 — Ops menu should dismiss on outside click
 - reported: 2026-06-10 · class: refinement
@@ -183,7 +185,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-017 — Offload stub default is the first line verbatim, not a summary
 - reported: 2026-06-10 · class: refinement
-- status: plan-approved (engine batch A; implement after the UI batches commit — tree clean between batches)
+- status: fixed@batch-A (reviewer-signed 2026-06-10; all gates incl. live)
 - what: "the summary seems to just be the user's message verbatim. that's not a summary" (on the F-003 prefill)
 - where: offload form prefill / engine deriveSummary default
 - expected: the default stub reads like a summary of the frame, not its first line
@@ -328,7 +330,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-032 — "combine…" label should just say "combine"
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "oh i finally understood. 'combine...' is the actual text, not a trim. just make the text 'combine'."
 - where: frames toolbar
 - expected: label "combine" (cancel state unchanged)
@@ -337,7 +339,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-033 — Capitalize "Context Composer" in the nav bar
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "Capitalize Context Composer in the nav bar"
 - where: topbar h1
 - expected: "Context Composer" (matches the tab title from F-024)
@@ -346,7 +348,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-034 — Frames-tab tooltip: Nil's exact copy
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "copy for 'frames': inspect and edit the context frames"
 - where: frames tab tooltip
 - expected: verbatim Nil copy
@@ -355,7 +357,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-035 — Refresh tooltip: say WHEN to click it, clearer on-focus phrasing
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "'(also refreshes when you return to this window)' could be said in a more clear way. more importantly: when is the user supposed to click this button? not clear."
 - where: refresh tooltip
 - expected: copy that names the actual use case — the conversation advanced (AI replied in the terminal) while this window stayed focused; everything else refreshes automatically (focus + after every op)
@@ -364,7 +366,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-036 — Preamble content is not viewable in the details panel
 - reported: 2026-06-10 · class: bug
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "Question: why is preamble content not shown?"
 - where: details panel for p0
 - expected: §8 — the details panel shows full text; preamble's content lives in system/tools/injectedSystem (not messages), which today surface only as advanced-tier COUNT rows ("2 definition(s)"), and the emission section shows "(no messages)" — so the actual content is unreachable in the UI (the CLI shows it)
@@ -373,9 +375,67 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-037 — Combine tooltip: drop "pick the frames, then run"
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-6
+- status: fixed@7b46b02
 - what: "'then run'? not clear. 'merge several frames into one' is enough"
 - where: combine button tooltip
 - expected: verbatim Nil copy
 - evidence: pure UI copy
 - resolution: fixed: combine tooltip is exactly "merge several frames into one".
+
+## F-038 — Add-frame tooltip copy
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-7
+- what: "add frame copy: insert text anywhere in the context"
+- where: frames toolbar, add button tooltip
+- expected: verbatim Nil copy
+- resolution: fixed: add tooltip is Nil's verbatim copy ("insert text anywhere in the context").
+
+## F-039 — Add form position field: ambiguous (before/after?) — dropdown wanted
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-7
+- what: "'position (frame id / start / end)' -> it's not clear if it appears before or after the frame id. i think also a drop down menu may be better. maybe as alternative?"
+- where: add form, position param
+- expected: explicit AFTER semantics; a dropdown (at the end / at the start / after <each frame>) instead of free text
+- evidence: pure UI — the registry param kind "position" gets a dedicated renderer fed by the already-loaded frame list; build() mapping unchanged (ops.ts untouched)
+- resolution: fixed: position renders as a dropdown — "at the end" (default) / "at the start" / "after <id> — <title>" per loaded frame; explicit AFTER semantics; values map unchanged through ops.ts position() ("" omit / start→null / id). ops.ts untouched. Regression: op-menu add test rewritten for the dropdown.
+
+## F-040 — Submit buttons: "run add" → "add"; visual style for committing actions
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-7
+- what: "'run add' -> 'add' (maybe we can have a unique visual style for buttons that commit transactions)... it would look a bit more 'definitive' or 'serious'."
+- where: op form submit buttons
+- expected: bare verb label + filled "primary action" styling (the standard pattern: filled = commits, outline = neutral/cancel)
+- resolution: fixed: submit buttons are the bare verb ("add"), styled as filled primary (accent bg) — committing actions read definitive; cancel stays outline. Regression: op-menu add test asserts label+class.
+
+## F-041 — Combine: unclear where the merged frame lands and what the merge logic is
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-7
+- what: "'combine 2 selected' ... doesn't make clear where the merged frame lands, or what the merge logic is. straight append or llm rewrite? Need more clarity"
+- where: combine flow copy
+- expected: copy states the truth (verify against engine: mechanical append in selection order, no LLM; landing position per engine semantics) in the combine panel + run-button tooltip
+- resolution: fixed: combine panel + run tooltip state the engine truth (verified in state.ts combine()): contents joined AS-IS in pick order, no LLM rewriting, result takes the first pick's slot. Copy only — semantics untouched.
+
+## F-042 — Homogenize combine with the other toolbar ops: panel + cancel; mutual exclusion
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-7
+- what: "'add frame' opens its own panel, with a cancel button. 'combine' doesn't have a panel, and the button itself becomes the way to cancel. let's homogenize. both should have a panel with a cancel button inside. also, clicking one of the 3 buttons should close/auto-cancel the panel for the one that is opened, if any."
+- where: frames toolbar
+- expected: combine mode renders a panel (explainer + run + cancel inside); opening any toolbar op cancels the other open one
+- resolution: fixed: combine gets the same panel treatment (explainer + primary run + cancel INSIDE); toolbar button is open-only; the three toolbar ops are mutually exclusive (opening one auto-cancels the other's panel). Regression: op-menu "F-042".
+
+## F-043 — Real-time updates (websocket/SSE) instead of fetch-on-demand
+- reported: 2026-06-10 · class: design-question
+- status: parked-for-Nil
+- what: "don't updates get sent in real time via websocket? this is making it sound like refresh is necessary every time, as opposed to the occasional desync."
+- where: UI data freshness model
+- expected: TBD by Nil — today there is NO push channel: the UI fetches on load, focus, and after each op (5a decision); a turn arriving while the window stays focused IS the desync case the refresh button exists for
+- evidence: adding push = new proxy surface (SSE/websocket route) + UI subscription — engine/proxy work with a plan gate; polling is a lighter alternative
+- resolution: parked; options: (a) SSE event stream from the daemon (control-surface addition, plan-gated), (b) cheap polling of compose headHash every N seconds (no new route), (c) keep fetch-on-demand. Refresh-tooltip copy stays accurate either way.
+
+## F-044 — Long tool names force horizontal scrolling in the details panel
+- reported: 2026-06-10 · class: bug
+- status: fixed@batch-7
+- what: "two tools ... longer than the side panel (mcp__claude_ai_Vercel__change_toolbar_thread_resolve_status,) added horizontal scrolling to the side panel, which is not good UI. i don't want horizontal scrolling there... i'm more ok with it just clipping"
+- where: details panel, F-036 preamble tool list
+- expected: no horizontal scroll — long unbroken tokens wrap (break-anywhere) or clip
+- resolution: fixed: details panel overflow-x hidden + overflow-wrap anywhere on collapsed summaries/pre/text — long tool names wrap instead of forcing horizontal scroll.
