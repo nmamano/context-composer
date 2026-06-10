@@ -389,6 +389,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - where: frames toolbar, add button tooltip
 - expected: verbatim Nil copy
 - resolution: fixed: add tooltip is Nil's verbatim copy ("insert text anywhere in the context").
+- confirmed: Nil confirmed live ("good").
 
 ## F-039 — Add form position field: ambiguous (before/after?) — dropdown wanted
 - reported: 2026-06-10 · class: refinement
@@ -398,6 +399,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: explicit AFTER semantics; a dropdown (at the end / at the start / after <each frame>) instead of free text
 - evidence: pure UI — the registry param kind "position" gets a dedicated renderer fed by the already-loaded frame list; build() mapping unchanged (ops.ts untouched)
 - resolution: fixed: position renders as a dropdown — "at the end" (default) / "at the start" / "after <id> — <title>" per loaded frame; explicit AFTER semantics; values map unchanged through ops.ts position() ("" omit / start→null / id). ops.ts untouched. Regression: op-menu add test rewritten for the dropdown.
+- confirmed: Nil confirmed live ("good").
 
 ## F-040 — Submit buttons: "run add" → "add"; visual style for committing actions
 - reported: 2026-06-10 · class: refinement
@@ -406,6 +408,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - where: op form submit buttons
 - expected: bare verb label + filled "primary action" styling (the standard pattern: filled = commits, outline = neutral/cancel)
 - resolution: fixed: submit buttons are the bare verb ("add"), styled as filled primary (accent bg) — committing actions read definitive; cancel stays outline. Regression: op-menu add test asserts label+class.
+- confirmed: Nil confirmed live ("good").
 
 ## F-041 — Combine: unclear where the merged frame lands and what the merge logic is
 - reported: 2026-06-10 · class: refinement
@@ -414,6 +417,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - where: combine flow copy
 - expected: copy states the truth (verify against engine: mechanical append in selection order, no LLM; landing position per engine semantics) in the combine panel + run-button tooltip
 - resolution: fixed: combine panel + run tooltip state the engine truth (verified in state.ts combine()): contents joined AS-IS in pick order, no LLM rewriting, result takes the first pick's slot. Copy only — semantics untouched.
+- confirmed: Nil confirmed copy ("good"); follow-up spawned F-047 (combine wants an insert-position menu — engine change).
 
 ## F-042 — Homogenize combine with the other toolbar ops: panel + cancel; mutual exclusion
 - reported: 2026-06-10 · class: refinement
@@ -422,15 +426,16 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - where: frames toolbar
 - expected: combine mode renders a panel (explainer + run + cancel inside); opening any toolbar op cancels the other open one
 - resolution: fixed: combine gets the same panel treatment (explainer + primary run + cancel INSIDE); toolbar button is open-only; the three toolbar ops are mutually exclusive (opening one auto-cancels the other's panel). Regression: op-menu "F-042".
+- confirmed: Nil confirmed live ("good").
 
 ## F-043 — Real-time updates (websocket/SSE) instead of fetch-on-demand
 - reported: 2026-06-10 · class: design-question
-- status: parked-for-Nil
+- status: decided-deferred (SSE chosen by Nil; out of 5e scope)
 - what: "don't updates get sent in real time via websocket? this is making it sound like refresh is necessary every time, as opposed to the occasional desync."
 - where: UI data freshness model
 - expected: TBD by Nil — today there is NO push channel: the UI fetches on load, focus, and after each op (5a decision); a turn arriving while the window stays focused IS the desync case the refresh button exists for
 - evidence: adding push = new proxy surface (SSE/websocket route) + UI subscription — engine/proxy work with a plan gate; polling is a lighter alternative
-- resolution: parked; options: (a) SSE event stream from the daemon (control-surface addition, plan-gated), (b) cheap polling of compose headHash every N seconds (no new route), (c) keep fetch-on-demand. Refresh-tooltip copy stays accurate either way.
+- resolution: Nil decided 2026-06-10: SSE (option a) — but DEFERRED, not in 5e scope ("refresh is good for our current scope"). When picked up: control-surface addition, plan gate required.
 
 ## F-044 — Long tool names force horizontal scrolling in the details panel
 - reported: 2026-06-10 · class: bug
@@ -439,3 +444,31 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - where: details panel, F-036 preamble tool list
 - expected: no horizontal scroll — long unbroken tokens wrap (break-anywhere) or clip
 - resolution: fixed: details panel overflow-x hidden + overflow-wrap anywhere on collapsed summaries/pre/text — long tool names wrap instead of forcing horizontal scroll.
+- confirmed: Nil confirmed live ("good").
+
+## F-045 — Mark the latest frame fork-only when it starts with *[SUGGESTION MODE*
+- reported: 2026-06-10 · class: refinement (engine, Nil-decided exception to a locked principle)
+- status: plan-gate-pending (next session: plan review BEFORE implementing)
+- what: "the final frame is often suggestion, but we have no way mechanically to know it's going to become a fork-only frame. i think we may want to make a one-off exception for this, and mark the latest frame as fork-only if it starts with *[SUGGESTION MODE*. I'm aware that this is brittle and can stop working if claude changes the format. i'm ok with that, as the downside is basically what we have now."
+- where: engine fork-only classification (inLastView), frame view filtering
+- expected: a frame whose content starts with the suggestion-mode marker is treated as fork-only immediately (not only after the next main-thread request reveals it wasn't in the view)
+- evidence: TENSION WITH LOCKED DESIGN ("no content heuristics") — Nil explicitly authorizes a narrow one-off exception and accepts the brittleness (graceful degradation = today's behavior). Engine-touching → plan gate; decide exact mechanism with reviewer (classification at ingest vs display-layer-only marking; display-only would be a pure-UI alternative worth proposing — it avoids touching engine truth entirely)
+- resolution: (next session) plan-gate with Context Reviewer, then implement per outcome
+
+## F-046 — "revert last" belongs in the history tab, not the frames toolbar
+- reported: 2026-06-10 · class: refinement
+- status: triaged (next session)
+- what: "the 'revert last' button seems a bit different than 'add frame' and 'combine'. is it about undoing the last operation in the history, rather than undoing the last frame? if so, i think it should go in the history tab, not this one."
+- where: frames toolbar / history tab
+- expected: ANSWERED: yes — revert undoes the last OPERATION (commit), not the last frame. Move the button to the history tab (next to the commit list it operates on), out of the frames toolbar
+- evidence: pure UI placement; history already has per-commit revert
+- resolution: (next session, pure-UI batch)
+
+## F-047 — Combine should offer the same insert-position menu as add
+- reported: 2026-06-10 · class: refinement (engine + op surface)
+- status: plan-gate-pending (next session)
+- what: "i want to add the same 'insert position' menu as the 'add frame' button" (on combine)
+- where: combine op — engine placement, ops.ts param, control route, CLI flag, UI dropdown
+- expected: combine accepts an optional position (default stays: first pick's slot)
+- evidence: op-surface change → parity rail: ops.ts param + CLI flag + control route param in the SAME batch + plan gate; engine combine() placement support
+- resolution: (next session) plan-gate with Context Reviewer first
