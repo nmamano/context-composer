@@ -121,8 +121,13 @@ describe("registry wire-honesty", () => {
       id: "f1",
       regen: true,
     });
-    // revert(last): empty body — {} reverts HEAD (commit picker is 5c).
+    // revert: {} reverts HEAD (5b topbar); a PROGRAMMATIC commit value targets
+    // a specific commit (5c history panel) — params stays [] so no form opens.
     expect(opByVerb("revert")!.build([], {})).toEqual({});
+    expect(opByVerb("revert")!.build([], { commit: "c7" })).toEqual({
+      commit: "c7",
+    });
+    expect(opByVerb("revert")!.params).toEqual([]);
   });
 
   test("registry is pure data — no DOM/React/fetch reachable from import", () => {

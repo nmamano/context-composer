@@ -368,6 +368,111 @@ try {
 
   await shot(page, "ops");
 
+  // ===========================================================================
+  // §11 Phase 5c — HISTORY/TIMELINE PANEL + CLICK-TO-REVERT (quota-free).
+  // Judged by fresh /control/history + /control/timeline + /control/list, not
+  // DOM text alone. The op section above already populated the log.
+  // ===========================================================================
+
+  interface PubCommit {
+    id: string;
+    type: string;
+    params: Record<string, unknown>;
+  }
+  const freshHistory = async () =>
+    (await getJson<{ commits: PubCommit[] }>(`/control/history?conv=${conv}`)).commits;
+  const freshTimeline = async () =>
+    (await getJson<{ events: { id: string; type: string }[] }>(
+      `/control/timeline?conv=${conv}`,
+    )).events;
+
+  /** Tab clicks can race a refetch re-render (the clicked node gets replaced
+   *  before React sees the event) — click-and-verify with retries. */
+  const switchTab = async (name: string, readySelector: string) => {
+    for (let i = 0; i < 3; i++) {
+      await page.getByRole("tab", { name, exact: true }).first().click();
+      try {
+        await page.waitForSelector(readySelector, { timeout: 3000 });
+        return;
+      } catch {
+        /* tab click lost to a re-render — retry */
+      }
+    }
+    throw new Error(`tab "${name}" did not activate (${readySelector})`);
+  };
+
+  await switchTab("history", ".commit-card");
+  const commits = await freshHistory();
+  const cardIdsHist = await page
+    .locator(".commit-card")
+    .evaluateAll((els) => els.map((e) => e.getAttribute("data-commit-id")));
+  check(
+    JSON.stringify(cardIdsHist) ===
+      JSON.stringify([...commits.map((c) => c.id)].reverse()),
+    `history tab lists all ${commits.length} commits newest-first (API oracle)`,
+  );
+  // Derived reverted marking: the op section's revert names its target.
+  const revertCommit = commits.find(
+    (c) => c.type === "revert" && typeof c.params.revertedCommitId === "string",
+  );
+  check(!!revertCommit, "log contains the op section's revert commit");
+  if (revertCommit) {
+    const targetId = revertCommit.params.revertedCommitId as string;
+    check(
+      (await page
+        .locator(`.commit-card[data-commit-id="${targetId}"] .chip-reverted`)
+        .count()) === 1,
+      `reverted target ${targetId} is visibly marked (derived display state)`,
+    );
+
+    // -- REFUSAL: revert the already-reverted commit — the daemon speaks ------
+    await page.locator(`.commit-revert[data-commit-id="${targetId}"]`).click();
+    await page.waitForSelector(".op-error-banner");
+    check(
+      /already reverted/i.test(await page.locator(".op-error-banner").innerText()),
+      "already-reverted refusal renders the daemon's text verbatim",
+    );
+    await page.locator(".op-error-banner .dismiss").click();
+  }
+
+  // -- panel revert SUCCESS: retitle B again, revert it FROM THE HISTORY CARD -
+  await switchTab("frames", ".frame-view .frame-card");
+  await openMenuAndPick(B.id, "retitle");
+  await page
+    .locator('.op-form[data-op="retitle"] label', { hasText: "title" })
+    .first()
+    .locator("input")
+    .fill("retitled-for-history-smoke");
+  await page.locator('.op-form[data-op="retitle"] button[type="submit"]').click();
+  await page.waitForSelector(
+    `.frame-card[data-frame-id="${B.id}"]:has-text("retitled-for-history-smoke")`,
+  );
+  const newest = (await freshHistory()).at(-1)!;
+  check(newest.type === "retitle", "newest commit is the fresh retitle (API oracle)");
+  await switchTab("history", ".commit-card");
+  await page.locator(`.commit-revert[data-commit-id="${newest.id}"]`).click();
+  await page.waitForSelector(
+    `.commit-card[data-commit-id="${newest.id}"].is-reverted`,
+  );
+  check(
+    (await freshList()).find((f) => f.id === B.id)!.title === oldTitle,
+    "click-to-revert from the history panel restored the title (API oracle)",
+  );
+
+  // -- timeline sub-view -------------------------------------------------------
+  await page.locator(".history-subtoggle button", { hasText: "timeline" }).click();
+  await page.waitForSelector(".event-row");
+  const events = await freshTimeline();
+  check(
+    (await page.locator(".event-row").count()) === events.length,
+    `timeline lists all ${events.length} events (API oracle)`,
+  );
+  check(
+    events.some((e) => e.type === "capture"),
+    "timeline includes capture events (the audit log, not just ops)",
+  );
+  await shot(page, "history");
+
   check(
     consoleErrors.length === 0,
     `no browser console errors (${consoleErrors.length === 0 ? "clean" : consoleErrors.join(" | ")})`,

@@ -65,6 +65,42 @@ export async function fetchComposeMeta(conv: string): Promise<ComposeMeta> {
   );
 }
 
+/** §11 Phase 5c — UI-facing mirrors of the control API's public op-log shapes
+ *  (proxy/server.ts publicCommit/publicEvent). Deliberately NOT imported from
+ *  server internals: the wire shape is the boundary, these types document it. */
+export interface PublicCommit {
+  id: string;
+  type: string;
+  affectedFrameIds: string[];
+  params: Record<string, unknown>;
+  note: string | null;
+  branchId: string | null;
+  parentCommitId: string | null;
+  timestamp: string;
+}
+
+export interface PublicEvent {
+  id: string;
+  type: string;
+  frameIds: string[];
+  commitId: string | null;
+  timestamp: string;
+}
+
+export async function fetchHistory(conv: string): Promise<PublicCommit[]> {
+  const data = await get<{ commits: PublicCommit[] }>(
+    `/control/history?conv=${encodeURIComponent(conv)}`,
+  );
+  return data.commits;
+}
+
+export async function fetchTimeline(conv: string): Promise<PublicEvent[]> {
+  const data = await get<{ events: PublicEvent[] }>(
+    `/control/timeline?conv=${encodeURIComponent(conv)}`,
+  );
+  return data.events;
+}
+
 /** §11 Phase 5b — dispatch one op through its control route. ALWAYS an explicit
  *  ?conv= (never the daemon's active-conversation default); on a non-2xx the
  *  daemon's own error text is thrown VERBATIM — the guards speak, the UI never

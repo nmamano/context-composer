@@ -112,7 +112,7 @@ echo "[dual-smoke] turn 2…"
 send_prompt 'Reply with exactly: dual bravo ack.'
 wait_for_wire "dual bravo ack" 120
 
-echo "[dual-smoke] BROWSER SURGERY on the live session (delete turn-1, edit turn-2)…"
+echo "[dual-smoke] BROWSER SURGERY on the live session (offload turn-1; edit turn-2 then revert it from the history panel)…"
 CC_SMOKE_BASE="$BASE" CC_SMOKE_DIR="$SMOKE_DIR" \
   bun run scripts/dual-client-smoke.ts surgery
 

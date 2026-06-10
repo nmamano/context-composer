@@ -160,6 +160,65 @@ main > section { flex: 1; overflow-y: auto; padding: 16px; }
 .frame-card.combine-selected { outline: 2px dashed var(--accent); }
 .msg-index { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim); margin-right: 6px; }
 
+/* history view (§11 Phase 5c) */
+.history-view { display: flex; flex-direction: column; gap: 8px; max-width: 920px; margin: 0 auto; }
+.history-subtoggle {
+  display: flex; border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden; align-self: flex-start;
+  /* flex-shrink 0: the overflowing column flexbox would otherwise squash this
+     (overflow:hidden ⇒ min-height 0) to a sliver. Sticky keeps the toggle
+     reachable while a long commit log scrolls. */
+  flex-shrink: 0;
+  position: sticky; top: 0; z-index: 5; background: var(--bg);
+}
+.history-subtoggle button {
+  background: var(--bg-card); color: var(--text-dim); border: none;
+  padding: 4px 12px; cursor: pointer; font: inherit; font-size: 13px;
+}
+.history-subtoggle button.on { background: var(--accent); color: #10222f; font-weight: 600; }
+.commit-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+}
+.commit-card.is-reverted { opacity: 0.6; }
+.commit-card header { display: flex; gap: 10px; align-items: baseline; }
+.commit-id, .event-id, .event-commit { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
+.commit-type, .event-type { font-weight: 600; font-size: 13px; }
+.commit-ts, .event-ts { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+.commit-revert {
+  background: var(--bg-panel); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px 10px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.commit-revert:hover { color: var(--accent); border-color: var(--accent); }
+.chip-reverted { border-color: #9a6fc2; color: #9a6fc2; }
+.commit-note { margin: 4px 0 0; font-size: 13px; }
+.commit-frames { margin: 4px 0 0; font-size: 12px; color: var(--text-dim); display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.frame-link {
+  background: none; border: none; padding: 0; cursor: pointer; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent);
+  text-decoration: underline;
+}
+.frame-link.unknown { color: var(--text-dim); text-decoration: none; cursor: default; }
+.commit-diff, .commit-params { margin-top: 6px; font-size: 12px; }
+.commit-diff summary, .commit-params summary { cursor: pointer; color: var(--text-dim); }
+.diff-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.diff-columns pre {
+  margin: 0; padding: 6px 8px; border-radius: 6px; overflow-x: auto;
+  white-space: pre-wrap; word-break: break-word; font-size: 11px;
+}
+.diff-before { background: #3a2727; border: 1px solid #5c3a3a; }
+.diff-after { background: #24382a; border: 1px solid #3a5c44; }
+.commit-params pre {
+  margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 11px;
+}
+.event-row {
+  display: flex; gap: 10px; align-items: baseline;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 12px; font-size: 13px;
+}
+.event-frames { display: flex; gap: 6px; flex-wrap: wrap; }
+
 /* details panel */
 .details-panel {
   width: 420px; max-width: 45%; border-left: 1px solid var(--border);

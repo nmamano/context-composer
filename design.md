@@ -1078,6 +1078,35 @@ rule lives or dies on this gate).
 - **Risks/unknowns:** keeping React strictly a wrapper (no logic leak); SVG tree layout at
   scale (graduate to Cytoscape/Vis only if the tree gets large).
 - **Size:** L.
+- **Status:** **Built and live-validated (2026-06-10), in its SINGLE-BRANCH form** (per the
+  re-sequencing note above Phase 4 — Phase 5 ran before branching). Landed across three
+  slices, each reviewer-signed (plan + diff, zero unresolved findings):
+  - **5a** (`5b18570`) — daemon-served `ui/` React app at `GET /ui/*` (same origin as
+    `/control`, passthrough invariant preserved + route-table-tested); conversation view
+    (membership/order from compose's `emittedFrameIds` — the engine is the ordering
+    oracle; content `representation ?? messages` per frame) ⇄ frame view (**linear card
+    list** — the SVG git-tree is parked until Phase 4 branches exist); details panel with
+    explicit current-emission-vs-source sections; conversations switcher; Playwright
+    real-browser gate (`bun run ui:smoke`) judging via the control API against a
+    committed real-TUI-session fixture (credential-scanned by
+    `scripts/capture-ui-fixture.ts`).
+  - **5b** (`089d175`) — every mutating op from the browser through the SAME control
+    routes: `src/shared/ops.ts` registry (13 verbs) generates the op menus/forms; **the
+    parity acceptance above is enforced mechanically** — `test/op-parity.test.ts` diffs
+    the registry against the CLI's exported verb lists both directions, and the CLI
+    dispatch table is keyed by the exported verb union (drift = type error). No
+    optimistic UI; daemon refusals render verbatim (sticky banner); "run an op → both
+    views update" proven in a real browser (quota-free op smoke; LLM env scrubbed so
+    regen clicks are refusals). First DUAL-CLIENT gate: real TUI + browser on one
+    daemon, browser surgery, next unaware turn wiretap-verified.
+  - **5c** — history tab (commits | timeline sub-toggle): commit log with two-column
+    before/after diffs, derived reverted-marking (client-side over `params.
+    revertedCommitId` — display state, not a new source of truth), click-to-revert any
+    commit ({} stays HEAD for the topbar; refusal catalog reachable — guards speak);
+    timeline = full audit log incl. captures. Extended dual-client beat: browser
+    offload + edit + history-panel revert mid-session; the next TUI turn's wire carried
+    the stub (with artifact fileReference) and the reverted edit's restored source,
+    upstream 200. `checkout` and branch/tree visualization remain parked with Phase 4.
 
 ### Phase 6 — Demo polish + blog
 

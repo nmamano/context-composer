@@ -167,6 +167,14 @@ function stubFetch(input: RequestInfo | URL): Promise<Response> {
     if (!path.includes("conv=conv-1")) throw new Error(`compose without explicit conv: ${path}`);
     return reply(composeMeta);
   }
+  if (path.startsWith("/control/history")) {
+    if (!path.includes("conv=conv-1")) throw new Error(`history without explicit conv: ${path}`);
+    return reply({ conv: "conv-1", commits: [] });
+  }
+  if (path.startsWith("/control/timeline")) {
+    if (!path.includes("conv=conv-1")) throw new Error(`timeline without explicit conv: ${path}`);
+    return reply({ conv: "conv-1", events: [] });
+  }
   throw new Error(`unexpected fetch in test: ${path}`);
 }
 

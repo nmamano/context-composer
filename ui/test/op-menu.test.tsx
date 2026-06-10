@@ -75,6 +75,10 @@ const composeMeta = {
   hasCacheBreakpoint: true,
 };
 
+// §11 Phase 5c — history/timeline fixtures (mutable per-test via push).
+const history: Record<string, unknown>[] = [];
+const timeline: Record<string, unknown>[] = [];
+
 // --- recording fetch stub -----------------------------------------------------
 
 interface PostRecord { path: string; body: Record<string, unknown> }
@@ -110,6 +114,8 @@ function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return reply(shows[id]);
   }
   if (path.startsWith("/control/compose")) return reply(composeMeta);
+  if (path.startsWith("/control/history")) return reply({ conv: "conv-1", commits: history });
+  if (path.startsWith("/control/timeline")) return reply({ conv: "conv-1", events: timeline });
   throw new Error(`unexpected fetch in test: ${path}`);
 }
 

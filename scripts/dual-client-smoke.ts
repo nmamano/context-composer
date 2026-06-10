@@ -3,14 +3,16 @@
 // real TUI in tmux). Two modes:
 //
 //   surgery  — drive the REAL browser against the live daemon WHILE the TUI
-//              session is open: delete the turn-1 frame, edit the turn-2 frame
-//              through the UI op menu. Judged via the control API; writes the
+//              session is open (§11 5c form): OFFLOAD the turn-1 frame, EDIT
+//              the turn-2 frame, then REVERT that edit from the history panel
+//              — all through the UI. Judged via the control API; writes the
 //              chosen ids to $CC_SMOKE_DIR/surgery.json for the judge.
 //   judge    — after the TUI's post-surgery turn: find that turn's wiretap
-//              entry and assert the wire reflects the browser surgery
-//              (tombstone matched-but-omitted, override emitted, deleted
-//              content gone, upstream 200). The WIRETAP is the oracle — never
-//              the pane, never the DOM (design.md §11 standing-gate rule).
+//              entry and assert the wire reflects the browser surgery (the
+//              offloaded frame matched AND emitted as its stub with the
+//              artifact fileReference; the reverted edit's override gone and
+//              its source restored; upstream 200). The WIRETAP is the oracle —
+//              never the pane, never the DOM (design.md §11 standing-gate rule).
 //
 // Env: CC_SMOKE_BASE, CC_SMOKE_DIR, CC_WIRETAP (judge), markers below.
 
@@ -28,6 +30,9 @@ export const MARKER_TURN1 = "dual alpha ack";
 export const MARKER_TURN2 = "dual bravo ack";
 export const MARKER_TURN3 = "Say done";
 export const MARKER_EDIT = "edited in the browser during the live session (dual smoke)";
+/** Explicit offload stub summary — deriveSummary would otherwise quote the
+ *  frame's first line and the judge could not tell stub from source. */
+export const MARKER_OFFLOAD_SUMMARY = "offloaded-by-dual-smoke-5c";
 
 let failures = 0;
 function check(cond: boolean, label: string) {
@@ -92,17 +97,22 @@ if (mode === "surgery") {
     // Deterministic conversation targeting: select the main conv explicitly.
     await page.locator(".conv-switcher").selectOption(conv);
     await page.waitForLoadState("networkidle");
-    await page.getByRole("tab", { name: "frames" }).click();
+    await page.getByRole("tab", { name: "frames", exact: true }).click();
     await page.waitForSelector(`.frame-card[data-frame-id="${A.id}"]`);
 
-    // Browser surgery 1: delete the turn-1 frame.
+    // Browser surgery 1 (§11 5c): OFFLOAD the turn-1 frame, explicit summary so
+    // the judge can find the stub on the wire without the source text.
     await page.locator(`.op-menu[data-frame-id="${A.id}"] summary`).click();
     await page
-      .locator(`.op-menu[data-frame-id="${A.id}"] button[data-verb="delete"]`)
+      .locator(`.op-menu[data-frame-id="${A.id}"] button[data-verb="offload"]`)
       .click();
-    await page.waitForSelector(`.frame-card[data-frame-id="${A.id}"] .chip-deleted`);
+    await page
+      .locator('.op-form[data-op="offload"] input[type="text"]')
+      .fill(MARKER_OFFLOAD_SUMMARY);
+    await page.locator('.op-form[data-op="offload"] button[type="submit"]').click();
+    await page.waitForSelector(`.frame-card[data-frame-id="${A.id}"] .chip-offloaded`);
 
-    // Browser surgery 2: edit the turn-2 frame.
+    // Browser surgery 2: edit the turn-2 frame…
     await page.locator(`.op-menu[data-frame-id="${B.id}"] summary`).click();
     await page
       .locator(`.op-menu[data-frame-id="${B.id}"] button[data-verb="edit"]`)
@@ -110,34 +120,47 @@ if (mode === "surgery") {
     await page.locator('.op-form[data-op="edit"] textarea').fill(MARKER_EDIT);
     await page.locator('.op-form[data-op="edit"] button[type="submit"]').click();
     await page.waitForSelector(`.frame-card[data-frame-id="${B.id}"] .chip-override`);
+
+    // …then REVERT that edit from the HISTORY PANEL (§11 5c click-to-revert):
+    // the newest commit is the edit we just made — judged via fresh history.
+    const commits = await getJson<{ commits: { id: string; type: string }[] }>(
+      `/control/history?conv=${conv}`,
+    );
+    const editCommit = commits.commits.at(-1)!;
+    check(editCommit.type === "edit", `newest commit is the browser edit (${editCommit.id})`);
+    await page.getByRole("tab", { name: "history", exact: true }).click();
+    await page.waitForSelector(`.commit-card[data-commit-id="${editCommit.id}"]`);
+    await page.locator(`.commit-revert[data-commit-id="${editCommit.id}"]`).click();
+    await page.waitForSelector(
+      `.commit-card[data-commit-id="${editCommit.id}"].is-reverted`,
+    );
     await page.screenshot({ path: `${dir}/surgery.png`, fullPage: true });
 
-    // API oracle: the live store now carries the surgery.
+    // API oracle: the live store now carries offload + edit + revert(edit).
     const after = await getJson<{ frames: Summary[] }>(`/control/list?conv=${conv}`);
+    const aAfter = after.frames.find((f) => f.id === A.id)!;
+    const bAfter = after.frames.find((f) => f.id === B.id)!;
+    check(aAfter.offloaded, `browser offload of ${A.id} persisted in the LIVE daemon`);
     check(
-      after.frames.find((f) => f.id === A.id)!.deleted,
-      `browser delete of ${A.id} persisted in the LIVE daemon`,
-    );
-    check(
-      after.frames.find((f) => f.id === B.id)!.overridden,
-      `browser edit of ${B.id} persisted in the LIVE daemon`,
+      !bAfter.overridden,
+      `history-panel revert restored ${B.id}'s source representation`,
     );
   } finally {
     await browser.close();
   }
   await Bun.write(
     `${dir}/surgery.json`,
-    JSON.stringify({ conv, deletedId: A.id, editedId: B.id }),
+    JSON.stringify({ conv, offloadedId: A.id, editedId: B.id }),
   );
   if (failures > 0) process.exit(1);
-  console.log("dual-client surgery: done");
+  console.log("dual-client surgery: done (offload + edit + history revert)");
 }
 
 if (mode === "judge") {
   const wiretapPath = process.env.CC_WIRETAP ?? `${dir}/wiretap.jsonl`;
   const surgery = (await Bun.file(`${dir}/surgery.json`).json()) as {
     conv: string;
-    deletedId: string;
+    offloadedId: string;
     editedId: string;
   };
   interface Entry {
@@ -166,29 +189,38 @@ if (mode === "judge") {
   if (!turn3) process.exit(1);
 
   const outbound = JSON.stringify(turn3.outboundBody);
+  // Offload (browser): the frame still matches AND still emits — as the stub.
   check(
-    (turn3.viewFrameIds ?? []).includes(surgery.deletedId),
-    `tombstone ${surgery.deletedId} still MATCHED the unaware resend (view)`,
+    (turn3.viewFrameIds ?? []).includes(surgery.offloadedId),
+    `offloaded ${surgery.offloadedId} still MATCHED the unaware resend (view)`,
   );
   check(
-    !(turn3.emittedFrameIds ?? []).includes(surgery.deletedId),
-    `tombstone ${surgery.deletedId} OMITTED from the emission`,
+    (turn3.emittedFrameIds ?? []).includes(surgery.offloadedId),
+    `offloaded ${surgery.offloadedId} still emits (as the stub)`,
   );
   check(
-    !outbound.includes(MARKER_TURN1),
-    "deleted turn-1 content is GONE from the wire",
+    outbound.includes(MARKER_OFFLOAD_SUMMARY),
+    "offload STUB is on the wire (summary marker)",
   );
+  const offShown = await getJson<{ fileReference: string | null }>(
+    `/control/show?conv=${surgery.conv}&id=${surgery.offloadedId}`,
+  );
+  check(
+    !!offShown.fileReference && outbound.includes(offShown.fileReference),
+    "offload stub carries the artifact fileReference on the wire",
+  );
+  // Revert(edit) from the history panel: the SOURCE is back on the wire.
   check(
     (turn3.emittedFrameIds ?? []).includes(surgery.editedId),
-    `edited ${surgery.editedId} still emits`,
+    `reverted-edit frame ${surgery.editedId} still emits`,
   );
   check(
-    outbound.includes(MARKER_EDIT),
-    "browser-edited representation is ON THE WIRE",
+    !outbound.includes(MARKER_EDIT),
+    "reverted edit's override text left the wire",
   );
   check(
-    !outbound.includes(MARKER_TURN2),
-    "edited frame's pre-edit source text left the wire",
+    outbound.includes(MARKER_TURN2),
+    "reverted edit's SOURCE text is restored on the wire",
   );
   check(turn3.upstreamStatus === 200, `upstream accepted the rewritten body (200)`);
 
@@ -196,5 +228,7 @@ if (mode === "judge") {
     console.error("dual-client judge: FAILED");
     process.exit(1);
   }
-  console.log("dual-client judge: the next TUI turn's wire reflects the browser surgery");
+  console.log(
+    "dual-client judge: the next TUI turn's wire reflects the browser surgery (offload stub + reverted edit)",
+  );
 }

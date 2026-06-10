@@ -94,7 +94,7 @@ available: system Google Chrome 145 + Playwright 1.60 via bunx):
   UI op list against the CLI verb list (parity enforced mechanically).
   Acceptance: design.md §11 Phase 5 — "run an op → both views update", in a
   real browser, against a real daemon.
-- [ ] 5c — HISTORY/TIMELINE PANEL + DUAL-CLIENT LIVE SMOKE. Commit log with
+- [x] 5c — HISTORY/TIMELINE PANEL + DUAL-CLIENT LIVE SMOKE. Commit log with
   params/diff display, click-to-revert; timeline view; then the full beat:
   real TUI session + browser on one daemon, surgery from the browser
   (delete/edit/offload something), next TUI turn reflects it
@@ -400,3 +400,125 @@ verb list — the north-star rail, not a principle).
   offload/edit guards ("restore it first", "revert the combine first", …).
 - Dual-client smoke mechanics: 5a's tmux recipe (trust prompt, suggestion
   ghost-text caveat) + scripts/ui-smoke.sh daemon-boot pattern.
+
+---
+
+## PHASE 5c PICKUP (history/timeline panel + click-to-revert + live beat)
+
+Repo: /home/nil/nil/context-composer (TS on Bun), branch master.
+Baseline at authoring time: master @ 089d175 (5b committed: registry-driven
+ops + mechanical parity + the dual-client gate, reviewer-signed, zero
+findings).
+
+### What 5b learned (fold into this slice)
+
+- The dual-client beat ALREADY SHIPPED in 5b (scripts/dual-client-smoke.{sh,ts},
+  delete+edit surgery). 5c extends the same script's surgery with a
+  history-panel revert step rather than writing a new harness.
+- <details> dropdowns that stay open intercept neighbor clicks — any new
+  popover closes on action.
+- React checkbox onChange rides click events (component-test gotcha).
+- send_prompt verifies typed text in the pane before Enter — reuse, never
+  regress to blind Enter.
+- The op-error banner + single loadConversation path are the refusal/refetch
+  rails for revert-from-history too — no new paths.
+
+### Goal
+
+design.md §8 "Operation/history panel" in its single-branch form + §11
+Phase 5's remaining surface: the commit log (params/diff display) and the
+timeline (full audit log incl. captures), with CLICK-TO-REVERT on any commit
+— revert's rich refusals (already-reverted, non-revertible type, missing
+frames, structural coherence) rendered verbatim. Close the slice with the
+extended dual-client live beat and update design.md §11 Phase 5 Status.
+
+### Load-bearing mechanics
+
+1. **READ SURFACES, EXISTING ROUTES:** GET /control/history (publicCommit:
+   id, type, affectedFrameIds, params, note, branchId, parentCommitId,
+   timestamp) and GET /control/timeline (publicEvent: id, type, frameIds,
+   commitId, timestamp). Both are CLI verbs already — no parity motion. NO
+   new control routes.
+2. **REVERT-BY-COMMIT through the registry:** extend the existing revert
+   OpSpec with an optional `commit` param ({} still = HEAD — 5b's topbar
+   button unchanged; {commit} = ctx revert <commit>). Same route, same CLI
+   verb, parity intact; update op-parity body-shape cases.
+3. **HISTORY VIEW = THIRD TAB** (proposal — decide with reviewer): tabs
+   conversation | frames | history; inside, a commits/timeline sub-toggle.
+   Commit cards: type + note + affected frame ids (click → select frame,
+   details panel opens) + timestamp + params; for content-op params with
+   before/after, a side-by-side (two-column) collapsed diff rendering (§8
+   "side-by-side diffs", tracer form). Reverted commits visibly marked
+   (commit-graph annotation… check what publicCommit exposes; if reverted
+   state is NOT on the wire, derive from revert commits' params
+   .revertedCommitId — pure mapping, decide rendering with reviewer).
+4. **CLICK-TO-REVERT:** a revert button per commit card → registry revert
+   with {commit: id} → postOp → SAME loadConversation refetch (+ history
+   refetch — fold history/timeline into the single data path: loadConversation
+   gains history+timeline fetches; one path, all views).
+5. **PURE MAPPING MODULES, tested without DOM:** history.ts (commit →
+   display rows, diff pairs, reverted-marking) + timeline.ts (event →
+   display) mirror the 5a flags/details pattern.
+6. **DUAL-CLIENT LIVE BEAT (extended):** surgery adds (a) offload via the
+   browser, and (b) a history-panel revert of the 5b-style edit — then the
+   next TUI turn's wiretap shows the offload stub emitted AND the reverted
+   edit's source back on the wire. Session healthy. Same script, extended.
+7. **design.md §11 Phase 5 Status** added (built + live-validated evidence,
+   single-branch scope note, parked SVG tree pointer to Phase 4).
+
+### Acceptance
+
+1. History tab lists every commit from /control/history with type, note,
+   affected frames, params; content-op commits render before/after
+   side-by-side; reverted commits are visibly marked.
+2. Click-to-revert: reverting a retitle from the panel restores the title
+   (API oracle + both views); reverting an ALREADY-reverted commit surfaces
+   the daemon's refusal verbatim in the banner.
+3. Timeline sub-view lists capture + op events in order with frame links.
+4. Parity test still green with the extended revert spec; component tests
+   cover history mapping, diff pairing, reverted-marking, revert dispatch.
+5. Browser smoke (ui:smoke) gains a history section: retitle → revert from
+   the panel → title restored (API-oracled); refusal case included;
+   timeline view renders.
+6. Extended dual-client smoke passes (offload + history-revert surgery,
+   wiretap-verified next turn).
+7. All standing gates green; design.md §11 Phase 5 Status updated.
+
+### Decide with reviewer (open, not locked)
+
+- History as third TAB vs side panel next to frame view. Proposal: tab
+  (small screens, simpler layout; the details panel already occupies the
+  side).
+- Reverted-commit marking: derive from revert commits' params
+  (.revertedCommitId) client-side (pure mapping over the fetched log —
+  proposal) vs exposing commit-graph reverted state on the wire (server
+  change — only if the reviewer prefers the explicit surface).
+- Diff rendering depth: two-column collapsed <pre> JSON/text of
+  before/after (proposal, tracer) vs inline structural diffing (overkill?).
+- Whether the timeline merges into the history list (one chronological
+  stream with a filter) vs a sub-toggle (proposal: sub-toggle — they answer
+  different questions: "what did I do" vs "what happened").
+
+### Locked — don't relitigate
+
+- No new control routes; history/timeline/revert are the existing surface.
+- Reverted marking must NOT re-implement commit-graph semantics beyond
+  reading what the API returns — if the data isn't derivable purely, stop
+  and decide with the reviewer (rail #2's spirit).
+- No branch visualization, no checkout, no commit-graph DAG rendering —
+  single-branch list only (Phase 4 owns the tree).
+- 5b rails all carry: no optimistic UI, guards speak, single data path,
+  8788 untouched, smoke ports own (8806 ui, 8809 dual).
+- Scope guard: history/timeline/click-revert + live beat + §11 status ONLY —
+  no regen backend (5d), no send, no head-op changes.
+
+### Resources
+
+- proxy/server.ts /control/history + /control/timeline (publicCommit/
+  publicEvent shapes); engine/commit-graph.ts (isReverted — for
+  understanding, not for re-implementation); state.ts revert() refusal
+  catalog (lines ~1046+).
+- cli/ctx.ts cmdHistory/cmdTimeline/cmdRevert output for display parity
+  inspiration.
+- 5b surfaces: ops.ts revert spec, App runOp/banner, ui-smoke op section
+  (append history section), dual-client-smoke.ts surgery mode (extend).

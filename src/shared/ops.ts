@@ -219,9 +219,15 @@ export const OP_REGISTRY: OpSpec[] = [
     verb: "revert",
     route: "/control/revert",
     arity: "none",
+    // params stays EMPTY: revert never opens a form (the 5b topbar button
+    // reverts HEAD immediately). §11 Phase 5c passes `commit` PROGRAMMATICALLY
+    // from history cards — same route, same CLI verb (ctx revert [<commit>]),
+    // parity intact.
     params: [],
-    // 5b: revert(last) only — {} reverts HEAD. The commit picker is 5c.
-    build: () => ({}),
+    build: (_targets, v) => {
+      const commit = str(v.commit);
+      return commit !== undefined ? { commit } : {};
+    },
   },
 ];
 

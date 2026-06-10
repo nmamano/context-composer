@@ -16,11 +16,15 @@ import {
   fetchConversations,
   fetchFrame,
   fetchFrames,
+  fetchHistory,
+  fetchTimeline,
   postOp,
   type ComposeMeta,
   type ConversationSummary,
   type Frame,
   type FrameSummary,
+  type PublicCommit,
+  type PublicEvent,
 } from "./api.ts";
 import type { OpSpec } from "../../src/shared/ops.ts";
 import { opByVerb } from "../../src/shared/ops.ts";
@@ -28,14 +32,20 @@ import { ConversationView } from "./components/ConversationView.tsx";
 import { FrameView } from "./components/FrameView.tsx";
 import { DetailsPanel } from "./components/DetailsPanel.tsx";
 import { OpForm, type FormValues } from "./components/OpMenu.tsx";
+import { HistoryView, type HistorySubView } from "./components/HistoryView.tsx";
 
-export type ViewMode = "conversation" | "frames";
+export type ViewMode = "conversation" | "frames" | "history";
 
 interface Loaded {
   conv: string;
   frames: FrameSummary[];
   compose: ComposeMeta;
   details: Map<string, Frame>;
+  /** §11 Phase 5c — op log + audit log ride the SAME data path: a post-op
+   *  refetch refreshes frames, compose, history and timeline together (no
+   *  separately-stale caches). */
+  history: PublicCommit[];
+  timeline: PublicEvent[];
 }
 
 /** A registry op opened against 0..n targets, awaiting form params. */
@@ -61,6 +71,7 @@ export function App() {
   const [opError, setOpError] = useState<OpError | null>(null);
   const [combineMode, setCombineMode] = useState(false);
   const [combineIds, setCombineIds] = useState<string[]>([]);
+  const [historySubView, setHistorySubView] = useState<HistorySubView>("commits");
   const inFlight = useRef(false);
 
   /** The single data path: conversations → list + compose meta → show() per
@@ -82,13 +93,15 @@ export function App() {
         setError(null);
         return;
       }
-      const [frames, compose] = await Promise.all([
+      const [frames, compose, history, timeline] = await Promise.all([
         fetchFrames(conv),
         fetchComposeMeta(conv),
+        fetchHistory(conv),
+        fetchTimeline(conv),
       ]);
       const shown = await Promise.all(frames.map((f) => fetchFrame(conv, f.id)));
       const details = new Map(shown.map((f) => [f.id, f]));
-      setLoaded({ conv, frames, compose, details });
+      setLoaded({ conv, frames, compose, details, history, timeline });
       setError(null);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -204,6 +217,14 @@ export function App() {
           >
             frames
           </button>
+          <button
+            role="tab"
+            aria-selected={view === "history"}
+            className={view === "history" ? "on" : ""}
+            onClick={() => setView("history")}
+          >
+            history
+          </button>
         </div>
         {loaded && (
           <div className="store-ops">
@@ -284,7 +305,7 @@ export function App() {
             selectedId={selectedId}
             onSelect={setSelectedId}
           />
-        ) : (
+        ) : view === "frames" ? (
           <FrameView
             frames={loaded.frames}
             selectedId={selectedId}
@@ -293,6 +314,19 @@ export function App() {
             combineMode={combineMode}
             combineIds={combineIds}
             onToggleCombine={toggleCombine}
+          />
+        ) : (
+          <HistoryView
+            commits={loaded.history}
+            events={loaded.timeline}
+            details={loaded.details}
+            subView={historySubView}
+            onSubView={setHistorySubView}
+            // §11 Phase 5c click-to-revert: the SAME registry revert op, with
+            // the commit id passed programmatically (no form; {} stays HEAD
+            // for the topbar). Refusals ride the standing banner verbatim.
+            onRevert={(commitId) => void runOp(revertOp, [], { commit: commitId })}
+            onSelectFrame={setSelectedId}
           />
         )}
         {selected && (
