@@ -96,4 +96,16 @@ describe("eventRows", () => {
     expect(rows[0]!.commitId).toBeNull();
     expect(rows[1]!.commitId).toBe("c1");
   });
+
+  // F-050: the daemon's per-event note must survive the mapping (the
+  // enriched event carries its provenance there).
+  test("F-050: note is carried through (null when absent)", () => {
+    const events: PublicEvent[] = [
+      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null },
+      { id: "e2", type: "enriched", frameIds: ["t1"], commitId: null, timestamp: "ts2", note: "title+summary via claude-cli:claude-sonnet-4-6@low" },
+    ];
+    const rows = eventRows(events);
+    expect(rows[0]!.note).toBeNull();
+    expect(rows[1]!.note).toBe("title+summary via claude-cli:claude-sonnet-4-6@low");
+  });
 });

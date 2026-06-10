@@ -439,15 +439,19 @@ try {
     throw new Error(`tab "${name}" did not activate (${readySelector})`);
   };
 
+  // F-048: a manual refresh acknowledges itself with a brief ✓.
+  await page.locator(".topbar .refresh").click();
+  await page.waitForSelector('.topbar .refresh:has-text("✓")');
+  check(true, "F-048: refresh flashed ✓ after the re-fetch");
+
   await switchTab("history", ".commit-card");
   const commits = await freshHistory();
   const cardIdsHist = await page
     .locator(".commit-card")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-commit-id")));
   check(
-    JSON.stringify(cardIdsHist) ===
-      JSON.stringify([...commits.map((c) => c.id)].reverse()),
-    `history tab lists all ${commits.length} commits newest-first (API oracle)`,
+    JSON.stringify(cardIdsHist) === JSON.stringify(commits.map((c) => c.id)),
+    `F-049: history lists all ${commits.length} commits chronologically, newest at the bottom (API oracle)`,
   );
   // Derived reverted marking: the op section's revert names its target.
   const revertCommit = commits.find(
@@ -504,6 +508,14 @@ try {
   check(
     (await page.locator(".event-row").count()) === events.length,
     `timeline lists all ${events.length} events (API oracle)`,
+  );
+  check(
+    JSON.stringify(
+      await page
+        .locator(".event-row")
+        .evaluateAll((els) => els.map((e) => e.getAttribute("data-event-id"))),
+    ) === JSON.stringify(events.map((e) => e.id)),
+    "F-049: timeline grows downward (chronological, API oracle)",
   );
   check(
     events.some((e) => e.type === "capture"),

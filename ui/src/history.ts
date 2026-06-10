@@ -63,6 +63,9 @@ export interface EventRow {
   frameIds: string[];
   commitId: string | null;
   timestamp: string;
+  /** F-050: the event's own annotation (e.g. how a frame was enriched) —
+   *  reported by the daemon; the view must not drop it. */
+  note: string | null;
 }
 
 export function eventRows(events: PublicEvent[]): EventRow[] {
@@ -72,5 +75,6 @@ export function eventRows(events: PublicEvent[]): EventRow[] {
     frameIds: e.frameIds,
     commitId: e.commitId ?? null,
     timestamp: e.timestamp,
+    note: e.note ?? null,
   }));
 }

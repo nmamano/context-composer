@@ -82,6 +82,9 @@ export function App() {
   const [stashedId, setStashedId] = useState<string | null>(null);
   /** F-009: brief "copied" feedback on the conv-key copy button. */
   const [copied, setCopied] = useState(false);
+  // F-048: brief ✓ acknowledging a manual refresh (the re-render is otherwise
+  // invisible when nothing changed).
+  const [refreshFlash, setRefreshFlash] = useState(false);
   /** F-006 (Nil-confirmed): fork-only frames are HIDDEN in the frame view by
    *  default — a display filter only; the engine's frame list stays the truth
    *  and the toggle keeps them inspectable. App-level so it survives tab
@@ -91,39 +94,47 @@ export function App() {
 
   /** The single data path: conversations → list + compose meta → show() per
    *  frame. Explicit ?conv= on every store-scoped request. 5b's post-op
-   *  refetch is THIS function — there is no second path. */
-  const loadConversation = useCallback(async (convId?: string | null) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    try {
-      const conversations = await fetchConversations();
-      setConvs(conversations);
-      const conv =
-        (convId && conversations.some((c) => c.id === convId) ? convId : null) ??
-        conversations.find((c) => c.active)?.id ??
-        conversations[0]?.id ??
-        null;
-      if (!conv) {
-        setLoaded(null);
+   *  refetch is THIS function — there is no second path.
+   *  Returns true only when a refetch actually LANDED (false on the in-flight
+   *  skip and on failure) — F-048's ✓ must never claim a refresh that didn't
+   *  happen (reviewer finding, batch 9). */
+  const loadConversation = useCallback(
+    async (convId?: string | null): Promise<boolean> => {
+      if (inFlight.current) return false;
+      inFlight.current = true;
+      try {
+        const conversations = await fetchConversations();
+        setConvs(conversations);
+        const conv =
+          (convId && conversations.some((c) => c.id === convId) ? convId : null) ??
+          conversations.find((c) => c.active)?.id ??
+          conversations[0]?.id ??
+          null;
+        if (!conv) {
+          setLoaded(null);
+          setError(null);
+          return true; // the refetch landed — the store is just empty
+        }
+        const [frames, compose, history, timeline] = await Promise.all([
+          fetchFrames(conv),
+          fetchComposeMeta(conv),
+          fetchHistory(conv),
+          fetchTimeline(conv),
+        ]);
+        const shown = await Promise.all(frames.map((f) => fetchFrame(conv, f.id)));
+        const details = new Map(shown.map((f) => [f.id, f]));
+        setLoaded({ conv, frames, compose, details, history, timeline });
         setError(null);
-        return;
+        return true;
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+        return false;
+      } finally {
+        inFlight.current = false;
       }
-      const [frames, compose, history, timeline] = await Promise.all([
-        fetchFrames(conv),
-        fetchComposeMeta(conv),
-        fetchHistory(conv),
-        fetchTimeline(conv),
-      ]);
-      const shown = await Promise.all(frames.map((f) => fetchFrame(conv, f.id)));
-      const details = new Map(shown.map((f) => [f.id, f]));
-      setLoaded({ conv, frames, compose, details, history, timeline });
-      setError(null);
-    } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
-    } finally {
-      inFlight.current = false;
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     void loadConversation();
@@ -338,9 +349,19 @@ export function App() {
         <button
           className="refresh"
           data-tip="load what's new — use it if the conversation advanced while you kept this window open; switching back to the window refreshes on its own"
-          onClick={() => void loadConversation(loaded?.conv)}
+          // F-048: the click acknowledges itself — a brief ✓ when the
+          // re-fetch lands (same pattern as the copy button). Only on an
+          // ACTUAL landed refetch: skipped (already in flight) or failed
+          // loads must not flash success (reviewer finding, batch 9).
+          onClick={() =>
+            void loadConversation(loaded?.conv).then((ok) => {
+              if (!ok) return;
+              setRefreshFlash(true);
+              window.setTimeout(() => setRefreshFlash(false), 1200);
+            })
+          }
         >
-          refresh
+          {refreshFlash ? "✓ refreshed" : "refresh"}
         </button>
       </header>
 

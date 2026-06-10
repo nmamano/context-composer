@@ -163,8 +163,12 @@ const composeMeta = {
 // --- fetch stub --------------------------------------------------------------
 
 const realFetch = globalThis.fetch;
+/** F-048: flip to make the next loads fail (network down) — the refresh ✓
+ *  must not flash on a failed refetch. Reset in the test's finally. */
+let failLoads = false;
 function stubFetch(input: RequestInfo | URL): Promise<Response> {
   const path = String(input);
+  if (failLoads) return Promise.reject(new Error("network down (test)"));
   const reply = (data: unknown) =>
     Promise.resolve(
       new Response(JSON.stringify(data), {
@@ -359,6 +363,36 @@ test("F-009: conv identity rendered selectable; copy button copies the full key"
       value: undefined,
       configurable: true,
     });
+  }
+  await unmount();
+});
+
+// F-048: a manual refresh acknowledges itself — a brief ✓ when the re-fetch
+// lands (an unchanged store renders identically, so without it the click
+// looks dead). The ✓ must mean it: a FAILED refetch shows the error banner
+// and no success flash (reviewer finding, batch 9).
+test("F-048: refresh flashes ✓ once the re-fetch lands — but never on failure", async () => {
+  const { container, act, unmount } = await renderApp();
+  try {
+    const btn = container.querySelector(".topbar .refresh")!;
+    expect(btn.textContent).toBe("refresh");
+    await act(async () => click(btn));
+    await flush(act);
+    expect(btn.textContent).toBe("✓ refreshed");
+    // Let the flash clear, then fail the next refetch: no ✓, error speaks.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1300));
+    });
+    expect(btn.textContent).toBe("refresh");
+    failLoads = true;
+    await act(async () => click(btn));
+    await flush(act);
+    expect(btn.textContent).toBe("refresh");
+    expect(container.querySelector(".error-banner")!.textContent).toContain(
+      "network down (test)",
+    );
+  } finally {
+    failLoads = false;
   }
   await unmount();
 });

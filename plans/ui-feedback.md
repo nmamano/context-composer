@@ -39,6 +39,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
   6. in-memory non-blocking queue; live-ingest only, NO replay/backfill on store load in this slice.
   7. risk precision: post-F-017 the auto-summary also rides CLI/control offload without --summary (intended; not UI-preview-only).
 - live-gate evidence (2026-06-10, Nil green-lit quota): demo PASS; live-e2e PASS; live-phase2 PASS; dual-client PASS on retry (first attempt was a marker-phrasing flake — turn-1 upstream 200, exact-string marker missing; retry clean) incl. the F-017 stub-on-wire checks. LIVE ENRICHMENT end-to-end on a throwaway daemon (:8812, fresh store): real `claude --model claude-sonnet-4-6 --effort low` call → t1 titled "User asks tallest mountain on Earth" + faithful summary + audited note "title+summary via claude-cli:claude-sonnet-4-6@low" through /control/timeline. The failure path proved itself live too (claude not on the daemon shell's PATH → non-fatal log line, placeholder kept, no event; CC_CLAUDE_BIN fixes it).
+- confirmed: Nil confirmed live 2026-06-10 ("good" on auto-titles populating new frames; "that's fine" on old frames keeping placeholders). Follow-up spawned F-050 (enriched timeline entry looks like any other — the UI drops the note).
 - live-check findings FIXED pre-review: (1) publicEvent route mapper silently dropped the new `note` field → added (+ ui PublicEvent type, + route-level regression assert); (2) head-only input truncation ate the user's real question behind Claude Code's front-loaded skills reminder, making the model describe the enrichment instructions themselves → head+tail truncation (2000+3500) + prompt hardening (never describe the instructions; "background context" fallback for boilerplate-only turns) + regression test.
 
 ## F-002 — Ops menu should dismiss on outside click
@@ -191,6 +192,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: the default stub reads like a summary of the frame, not its first line
 - evidence: engine deriveSummary (src/engine/offload.ts) is deliberately deterministic-no-LLM from Phase 3b; the prefill faithfully previews it — the default itself is what underwhelms
 - resolution: fold into engine batch A with F-001: auto-summaries at ingest (sonnet, low thinking) become the offload default (summary ?? f.summary ?? deriveSummary ?? fallback); UI prefill mirrors the same chain. Plan-gated.
+- confirmed: Nil confirmed live 2026-06-10 ("good" — offload prefills the auto-summary, not the first line).
 
 ## F-018 — Switching to conversation view should jump to the selected frame
 - reported: 2026-06-10 · class: refinement
@@ -457,7 +459,8 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-046 — "revert last" belongs in the history tab, not the frames toolbar
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-8 (reviewer-signed 2026-06-10: no blocking findings, focused tests 29/29)
+- status: fixed@19761d6 (batch 8; reviewer-signed 2026-06-10: no blocking findings, focused tests 29/29)
+- confirmed: Nil confirmed live ("good").
 - what: "the 'revert last' button seems a bit different than 'add frame' and 'combine'. is it about undoing the last operation in the history, rather than undoing the last frame? if so, i think it should go in the history tab, not this one."
 - where: frames toolbar / history tab
 - expected: ANSWERED: yes — revert undoes the last OPERATION (commit), not the last frame. Move the button to the history tab (next to the commit list it operates on), out of the frames toolbar
@@ -475,18 +478,46 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-048 — Refresh button gives no feedback that anything happened
 - reported: 2026-06-10 (Nil's "7.1") · class: refinement
-- status: triaged
+- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
 - what: "the refresh button has no feedback when you click it that anything happened"
 - where: topbar refresh button
 - expected: clicking refresh visibly acknowledges the click (and ideally distinguishes "refetched, nothing new" from "refetched, updated")
 - evidence: pure UI — loadConversation refetches silently; when nothing changed the render is identical, so a successful click is indistinguishable from a dead button
-- resolution: (queued for next pure-UI batch)
+- resolution: in batch 9: clicking refresh flashes "✓ refreshed" for 1.2s once the re-fetch lands (the copy-button pattern); min-width keeps the topbar from shifting (F-012). Regression: app-render "F-048"; ui:smoke check.
 
 ## F-049 — History view: commits and timeline should grow downward like the other views
 - reported: 2026-06-10 (Nil's "7.2") · class: refinement
-- status: triaged
+- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
 - what: "for history view, commits and timeline should grow downward, just like conversatino and frames views"
 - where: history tab, both sub-views
 - expected: chronological order — oldest at top, newest at bottom (matching conversation + frames); newest stays reachable, likely via open-scrolled-to-bottom + the discreet jump button (the F-020 pattern)
 - evidence: pure UI — both lists deliberately render newest-first since 5c ("the op you just ran is the one you look for"); Nil's report supersedes that lean. Order is derived display state; commit/event truth unchanged
-- resolution: (queued for next pure-UI batch)
+- resolution: in batch 9: commits + timeline render chronologically (oldest top, newest bottom); the scroller opens at the bottom and re-snaps on sub-view switch; discreet ↓ jump button (the F-020 pattern, mount-only, never fights user scrolling). Regressions: history-view order tests rewritten; ui:smoke order checks for both sub-views.
+
+## F-050 — "enriched" timeline entry indistinguishable; the UI drops the event's note
+- reported: 2026-06-10 · class: bug
+- status: fixed@batch-9 (reviewer-signed 2026-06-10: one finding — ✓ could flash on skipped/failed refetch — fixed pre-commit; focused tests 26/26)
+- what: "i don't know what 'enriched' means in this context. it looks like the others, afaict"
+- where: history tab, timeline sub-view, event rows
+- expected: the enriched event should explain itself — the engine RECORDS a note ("title+summary via claude-cli:claude-sonnet-4-6@low", per the F-001 plan: "audited not silent") and the route exposes it (batch-A live-check fix), but ui/src/history.ts eventRows() drops `note` and HistoryView never renders it — the view shows less than the API reports (same render-truth class as F-036)
+- evidence: api.ts PublicEvent carries note; eventRows() maps id/type/frameIds/commitId/timestamp only
+- resolution: in batch 9: event rows render the daemon's note (dim, beside the type); the enriched type carries a plain-language tooltip ("a title and summary were written for this frame automatically" — Nil adjusts live). Regressions: history.test.ts note mapping; history-view "F-050" (note rendered, tip jargon-free, non-enriched rows untouched).
+- clarified (Nil, 2026-06-10): his original confusion was different — he expected enrichment to change how a CAPTURE entry looks and didn't spot that "enriched" is its own standalone row. Confusion resolved by the F-051 answer. The note-drop gap is still real (view < API); kept queued since rendering the note makes the row self-explanatory — Nil to confirm he still wants it
+
+## F-051 — Question: why does a capture with p0 alternate after every frame / look duplicated? (answered)
+- reported: 2026-06-10 · class: observation
+- status: answered-in-chat
+- what: "why is there a capture frame with the p0 frame alternative after every other frame? and why does it look like duplicate timeline entries?" (timeline excerpt e1–e29)
+- expected: n/a — question; behavior is by design
+- evidence: two engine capture sites: ingest (state.ts ~226, records all frames the request touched — p0 is in every request because the client RESENDS the full system prompt + tools each call, so reconcile refreshes it) and captureReply (state.ts 372, the turn frame alone). A turn with a tool loop = several request/reply pairs, all bundled into ONE turn frame (locked granularity) but each wire event logged (timeline = complete audit trail, 5c). So `capture [p0, tN]` = request arrived, `capture [tN]` = reply arrived; pairs repeat per tool round. Not duplicates.
+- resolution: answered; if Nil wants friendlier rows (e.g. distinguishing request/reply captures, grouping a turn's tool rounds), labeling needs engine-side event detail → design-question + plan gate; say the word
+- follow-up (Nil, 2026-06-10): "shouldn't they have different names then?" → spawned F-052
+
+## F-052 — Request-arrival and reply-arrival events share the name "capture" — distinct names?
+- reported: 2026-06-10 · class: design-question
+- status: awaiting Nil's pick (then plan gate — engine event vocabulary)
+- what: "Two different things get logged as capture ... shouldn't they have different names then?"
+- where: engine event types (state.ts recordEvent), /control/timeline, CLI timeline, UI timeline rows
+- expected: TBD by Nil — event type vocabulary is engine truth (persisted in the store, shared by CLI and UI), so this is not a display-only rename
+- evidence: ingest-side capture (state.ts ~226: all frames the request touched) vs reply-side capture (state.ts 372: the turn frame alone) are genuinely different moments sharing one type string
+- resolution: options: (a) split the TYPE at record time (e.g. "request" / "reply", or keep "capture" + new "reply") — cleanest vocabulary but old stores carry legacy "capture" events forever, and every consumer (CLI, UI, tests) updates; (b) ADDITIVE detail field on the event (e.g. direction: request|reply) — old events simply lack it, store stays compatible, UI/CLI render friendlier labels from it; (c) leave engine as-is, UI infers from event shape (p0-in-frameIds heuristic) — rejected lean: brittle content-shape inference in the display layer. Lean (b). Nil picks; plan gate before any implementation

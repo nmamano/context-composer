@@ -6,7 +6,11 @@
 // revert — already-reverted commits and revert commits included: the marking
 // is derived display state, and the daemon's refusal catalog must stay
 // reachable (the guards speak).
+// F-049: both lists grow DOWNWARD (oldest top, newest bottom) like the other
+// views; the scroller opens at the bottom and a discreet ↓ jumps to latest
+// (the F-020 pattern). Order is derived display state; the log is the truth.
 
+import { useEffect, useRef } from "react";
 import type { Frame } from "../../../src/engine/types.ts";
 import type { PublicCommit, PublicEvent } from "../api.ts";
 import { commitRows, eventRows } from "../history.ts";
@@ -41,6 +45,13 @@ export function HistoryView(props: {
 }) {
   const rows = commitRows(props.commits);
   const evRows = eventRows(props.events);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // F-049: open at the newest entry (bottom). Re-snaps when the sub-view
+  // switches (different list, same intent); never fights scrolling afterwards.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [props.subView]);
   return (
     <section className="history-view" aria-label="history view">
       {/* F-026: a FIXED sub-nav — the toggle row sits OUTSIDE the scroll area
@@ -76,13 +87,13 @@ export function HistoryView(props: {
       </button>
       </div>
 
-      <div className="history-scroll">
+      <div className="history-scroll" ref={scrollRef}>
       {props.subView === "commits" ? (
         rows.length === 0 ? (
           <p className="empty">no commits yet — ops record here</p>
         ) : (
-          // Newest first: the op you just ran is the one you look for.
-          [...rows].reverse().map((c) => (
+          // F-049: chronological — newest at the bottom, like every other view.
+          rows.map((c) => (
             <article
               key={c.id}
               data-commit-id={c.id}
@@ -137,10 +148,20 @@ export function HistoryView(props: {
       ) : evRows.length === 0 ? (
         <p className="empty">no events yet</p>
       ) : (
-        [...evRows].reverse().map((e) => (
+        evRows.map((e) => (
           <article key={e.id} data-event-id={e.id} className="event-row">
             <span className="event-id">{e.id}</span>
-            <span className={`event-type event-type-${e.type}`}>{e.type}</span>
+            <span
+              className={`event-type event-type-${e.type}`}
+              // F-050: the one non-obvious type explains itself in plain words.
+              data-tip={
+                e.type === "enriched"
+                  ? "a title and summary were written for this frame automatically"
+                  : undefined
+              }
+            >
+              {e.type}
+            </span>
             <span className="event-frames">
               {e.frameIds.map((id) => (
                 <FrameLink
@@ -151,11 +172,26 @@ export function HistoryView(props: {
                 />
               ))}
             </span>
+            {/* F-050: render the event's own note (e.g. how a frame was
+                enriched) — the daemon reports it; the view must not drop it. */}
+            {e.note && <span className="event-note">{e.note}</span>}
             {e.commitId && <span className="event-commit">{e.commitId}</span>}
             <span className="event-ts">{e.timestamp}</span>
           </article>
         ))
       )}
+      <button
+        type="button"
+        className="jump-bottom"
+        aria-label="scroll to latest entry"
+        data-tip="jump to the latest entry"
+        onClick={() => {
+          const el = scrollRef.current;
+          if (el) el.scrollTop = el.scrollHeight;
+        }}
+      >
+        ↓
+      </button>
       </div>
     </section>
   );

@@ -101,8 +101,10 @@ const history = [
 ];
 
 const timeline = [
-  { id: "e1", type: "capture", frameIds: ["f1"], commitId: null, timestamp: "ts0" },
-  { id: "e2", type: "retitle", frameIds: ["f1"], commitId: "c1", timestamp: "ts1" },
+  { id: "e1", type: "capture", frameIds: ["f1"], commitId: null, timestamp: "ts0", note: null },
+  { id: "e2", type: "retitle", frameIds: ["f1"], commitId: "c1", timestamp: "ts1", note: null },
+  // F-050: the enriched event carries its provenance in `note`.
+  { id: "e3", type: "enriched", frameIds: ["f1"], commitId: null, timestamp: "ts2", note: "title+summary via claude-cli:claude-sonnet-4-6@low" },
 ];
 
 interface PostRecord { path: string; body: Record<string, unknown> }
@@ -190,15 +192,18 @@ async function openHistory(container: HTMLElement, act: typeof import("react").a
   await act(async () => click(tab));
 }
 
-test("history tab renders every commit (newest first) with derived reverted marking", async () => {
+test("F-049: history renders every commit CHRONOLOGICALLY (newest at the bottom) with derived reverted marking", async () => {
   const { container, act } = await renderApp();
   await openHistory(container, act);
   const cards = Array.from(container.querySelectorAll(".commit-card"));
+  // Oldest top, newest bottom — grows downward like the other views (Nil).
   expect(cards.map((c) => c.getAttribute("data-commit-id"))).toEqual([
-    "c3",
-    "c2",
     "c1",
+    "c2",
+    "c3",
   ]);
+  // The newest entry stays reachable: discreet jump-to-latest (F-020 pattern).
+  expect(container.querySelector(".history-scroll .jump-bottom")).not.toBeNull();
   const c1 = container.querySelector('.commit-card[data-commit-id="c1"]')!;
   expect(c1.className).toContain("is-reverted");
   expect(c1.textContent).toContain("reverted");
@@ -286,7 +291,7 @@ test("frame links: known frames select into details; unknown ids render inert", 
   expect(panel.textContent).toContain("alpha");
 });
 
-test("timeline sub-toggle lists events (captures included) with commit links", async () => {
+test("timeline sub-toggle lists events (captures included) with commit links, chronologically (F-049)", async () => {
   const { container, act } = await renderApp();
   await openHistory(container, act);
   const tlTab = Array.from(
@@ -294,7 +299,31 @@ test("timeline sub-toggle lists events (captures included) with commit links", a
   ).find((b) => (b.textContent ?? "").startsWith("timeline"))!;
   await act(async () => click(tlTab));
   const rows = Array.from(container.querySelectorAll(".event-row"));
-  expect(rows.map((r) => r.getAttribute("data-event-id"))).toEqual(["e2", "e1"]);
-  expect(rows[1]!.textContent).toContain("capture");
-  expect(rows[0]!.textContent).toContain("c1");
+  expect(rows.map((r) => r.getAttribute("data-event-id"))).toEqual(["e1", "e2", "e3"]);
+  expect(rows[0]!.textContent).toContain("capture");
+  expect(rows[1]!.textContent).toContain("c1");
+});
+
+// F-050: the daemon reports a per-event note (the enriched event's
+// provenance) — the view renders it and the type explains itself.
+test("F-050: enriched event renders its note and a plain-language tooltip", async () => {
+  const { container, act } = await renderApp();
+  await openHistory(container, act);
+  const tlTab = Array.from(
+    container.querySelectorAll(".history-subtoggle button"),
+  ).find((b) => (b.textContent ?? "").startsWith("timeline"))!;
+  await act(async () => click(tlTab));
+  const enriched = container.querySelector('.event-row[data-event-id="e3"]')!;
+  expect(enriched.querySelector(".event-note")!.textContent).toBe(
+    "title+summary via claude-cli:claude-sonnet-4-6@low",
+  );
+  const tip = enriched.querySelector(".event-type")!.getAttribute("data-tip")!;
+  expect(tip.length).toBeGreaterThan(0);
+  for (const word of ["emission", "audit", "registry", "arity"]) {
+    expect(tip.toLowerCase()).not.toContain(word);
+  }
+  // Non-enriched rows don't carry the tip and render no note span.
+  const capture = container.querySelector('.event-row[data-event-id="e1"]')!;
+  expect(capture.querySelector(".event-type")!.getAttribute("data-tip")).toBeNull();
+  expect(capture.querySelector(".event-note")).toBeNull();
 });
