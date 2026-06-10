@@ -245,7 +245,19 @@ main > section { flex: 1; overflow-y: auto; padding: 16px; }
    area (.history-scroll owns the scrolling), so it never moves and entries
    can never pass it. Tight spacing below the topbar per Nil. */
 .history-view { overflow: hidden; display: flex; flex-direction: column; padding: 8px 16px 0; gap: 0; }
-.history-subtoggle-row { flex-shrink: 0; padding: 0 0 8px; }
+.history-subtoggle-row {
+  flex-shrink: 0; padding: 0 0 8px;
+  display: flex; gap: 8px; align-items: center;
+}
+/* F-046: revert-last sits in the history sub-nav, beside the list it undoes;
+   same look as the frames-toolbar buttons it used to live with. */
+.history-subtoggle-row .op-revert {
+  background: var(--bg-card); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; font: inherit; font-size: 13px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.history-subtoggle-row .op-revert:hover { color: var(--text); }
 .history-scroll {
   overflow-y: auto; flex: 1; display: flex; flex-direction: column;
   gap: 8px; max-width: 920px; width: 100%; margin: 0 auto; padding-bottom: 16px;

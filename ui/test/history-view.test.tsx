@@ -230,16 +230,27 @@ test("click-to-revert posts the registry revert with a programmatic {commit}", a
   expect(container.querySelector(".op-form")).toBeNull();
 });
 
-test("frames-toolbar revert-last still posts {} (5b behavior preserved; F-029 moved it off the topbar)", async () => {
+test("F-046: revert-last lives in the history sub-nav (not the frames toolbar) and still posts {}", async () => {
   const { container, act } = await renderApp();
+  // Not in the frames toolbar anymore — it undoes the last COMMIT, so it
+  // belongs next to the commit list (Nil).
   const framesTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
     (b) => b.textContent === "frames",
   )!;
   await act(async () => click(framesTab));
-  await act(async () => click(container.querySelector(".store-ops .op-revert")!));
+  expect(container.querySelector(".store-ops .op-revert")).toBeNull();
+  // In the history sub-nav row, wired to the SAME registry verb: {} = HEAD.
+  await openHistory(container, act);
+  const btn = container.querySelector(".history-subtoggle-row .op-revert")!;
+  expect(btn).not.toBeNull();
+  expect(btn.getAttribute("data-tip")?.length).toBeGreaterThan(0);
+  await act(async () => click(btn));
   await flush(act);
   expect(posts).toHaveLength(1);
+  expect(posts[0]!.path.startsWith("/control/revert?conv=conv-1")).toBe(true);
   expect(posts[0]!.body).toEqual({});
+  // No form opened (revert has zero renderable params).
+  expect(container.querySelector(".op-form")).toBeNull();
 });
 
 test("already-reverted cards still offer revert; the daemon's refusal renders verbatim", async () => {

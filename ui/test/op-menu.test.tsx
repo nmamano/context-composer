@@ -190,9 +190,11 @@ test("op menu is GENERATED from the registry — every single-target verb, nothi
   ).map((b) => b.getAttribute("data-verb"));
   expect(menuButtons).toEqual(singleTargetOps().map((o) => o.verb));
   // F-029: store-scoped ops (none-arity) live in the FRAMES-VIEW toolbar —
-  // deliberately not in the nav bar.
+  // deliberately not in the nav bar. F-046: revert-last is NOT here either —
+  // it undoes the last commit, so it lives in the history tab (see
+  // history-view.test.tsx for its placement + wiring).
   expect(container.querySelector(".frame-view .store-ops .op-add")).not.toBeNull();
-  expect(container.querySelector(".frame-view .store-ops .op-revert")).not.toBeNull();
+  expect(container.querySelector(".frame-view .store-ops .op-revert")).toBeNull();
   expect(container.querySelector(".frame-view .store-ops .op-combine")).not.toBeNull();
   expect(container.querySelector(".topbar .op-add")).toBeNull();
   expect(container.querySelector(".topbar .op-revert")).toBeNull();
@@ -328,20 +330,6 @@ test("combine: selection mode collects ids in click order and POSTs {ids}", asyn
   expect(posts).toHaveLength(1);
   expect(posts[0]!.path.startsWith("/control/combine?conv=conv-1")).toBe(true);
   expect(posts[0]!.body).toEqual({ ids: ["f2", "f1"] });
-});
-
-test("revert(last) from the frames toolbar POSTs {} to /control/revert with explicit conv", async () => {
-  const { container, act } = await renderApp();
-  await openFrameView(container, act);
-  await act(async () => click(container.querySelector(".store-ops .op-revert")!));
-  for (let i = 0; i < 4; i++) {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-  }
-  expect(posts).toHaveLength(1);
-  expect(posts[0]!.path.startsWith("/control/revert?conv=conv-1")).toBe(true);
-  expect(posts[0]!.body).toEqual({});
 });
 
 test("add: F-039 position DROPDOWN maps start → after:null; frames listed as 'after <id>'", async () => {

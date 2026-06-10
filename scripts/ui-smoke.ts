@@ -369,8 +369,9 @@ try {
   const afterRestore = (await freshList()).find((f) => f.id === C.id)!;
   check(!afterRestore.offloaded, `restore ${C.id} re-inlined the emission (API oracle)`);
 
-  // -- retitle B, then store-scoped revert(last) from the frames toolbar
-  //    (F-029: store ops live in the frame view, not the nav bar) -------------
+  // -- retitle B, then revert(last) from the HISTORY sub-nav (F-046: it undoes
+  //    the last commit, so it lives next to the commit list — NOT in the
+  //    frames toolbar; F-029 keeps add/combine there) ------------------------
   const oldTitle = B.title;
   await openMenuAndPick(B.id, "retitle");
   await page
@@ -386,14 +387,21 @@ try {
     (await freshList()).find((f) => f.id === B.id)!.title === "smoke-retitled-5b",
     `retitle ${B.id} persisted (API oracle)`,
   );
-  await page.locator(".store-ops .op-revert").click();
+  check(
+    (await page.locator(".store-ops .op-revert").count()) === 0,
+    "F-046: revert-last is NOT in the frames toolbar",
+  );
+  await page.getByRole("tab", { name: "history" }).click();
+  await page.waitForSelector(".history-subtoggle-row .op-revert");
+  await page.locator(".history-subtoggle-row .op-revert").click();
+  await page.getByRole("tab", { name: "frames" }).click();
   await page.waitForSelector(
     `.frame-card[data-frame-id="${B.id}"]:has-text("smoke-retitled-5b")`,
     { state: "detached" },
   );
   check(
     (await freshList()).find((f) => f.id === B.id)!.title === oldTitle,
-    "revert(last) undid the retitle (store-scoped, frames toolbar)",
+    "revert(last) undid the retitle (F-046: history sub-nav)",
   );
 
   await shot(page, "ops");

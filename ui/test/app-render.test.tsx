@@ -430,11 +430,20 @@ test("F-021/F-028: all controls carry tooltips, free of jargon", async () => {
   for (const el of topbarControls) expect(tipOf(el).length).toBeGreaterThan(0);
   // Frames view: toolbar store-ops + the per-frame ops trigger.
   await act(async () => click(tab("frames")));
-  for (const sel of [".store-ops .op-add", ".store-ops .op-revert", ".store-ops .op-combine", ".op-menu summary"]) {
+  for (const sel of [".store-ops .op-add", ".store-ops .op-combine", ".op-menu summary"]) {
     expect(tipOf(container.querySelector(sel)!).length).toBeGreaterThan(0);
   }
   // F-028: jargon words banned from every tooltip in the app.
   const allTips = Array.from(container.querySelectorAll("[data-tip], [title]")).map(tipOf);
+  // F-046: revert-last moved to the history sub-nav — scan its tips too.
+  await act(async () => click(tab("history")));
+  expect(
+    tipOf(container.querySelector(".history-subtoggle-row .op-revert")!).length,
+  ).toBeGreaterThan(0);
+  allTips.push(
+    ...Array.from(container.querySelectorAll("[data-tip], [title]")).map(tipOf),
+  );
+  await act(async () => click(tab("frames"))); // batch-6 copy checks need the toolbar
   for (const word of ["emission", "audit", "registry", "arity"]) {
     for (const tip of allTips) {
       expect(tip.toLowerCase()).not.toContain(word);

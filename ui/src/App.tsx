@@ -215,9 +215,10 @@ export function App() {
 
   // F-008/F-029: where does the pending form live this render? Single-target
   // forms sit under their card (only if that card is visible — F-006 can hide
-  // fork-only cards); zero-target forms (add/revert) sit under the frames-view
-  // toolbar that triggered them. Any other view: the top host — a pending form
-  // is never invisible.
+  // fork-only cards); the zero-target add form sits under the frames-view
+  // toolbar that triggered it (revert is param-less — never a form; F-046
+  // moved its button to the history tab). Any other view: the top host — a
+  // pending form is never invisible.
   const targetVisible = (id: string) =>
     showForkOnly ||
     loaded?.frames.find((f) => f.id === id)?.inLastView !== false;
@@ -330,9 +331,10 @@ export function App() {
             history
           </button>
         </div>
-        {/* F-029: store-scoped ops (add/revert/combine) moved INTO the frames
-            view — they edit the conversation, so they live on the
-            manipulation surface, not in global chrome. */}
+        {/* F-029: store-scoped ops (add/combine) moved INTO the frames view —
+            they edit the conversation, so they live on the manipulation
+            surface, not in global chrome. F-046: revert-last lives in the
+            history tab, next to the commit list it undoes. */}
         <button
           className="refresh"
           data-tip="load what's new — use it if the conversation advanced while you kept this window open; switching back to the window refreshes on its own"
@@ -397,11 +399,6 @@ export function App() {
               setCombineIds([]);
               pickOp(addOp, []);
             }}
-            onRevertLast={() => {
-              setCombineMode(false);
-              setCombineIds([]);
-              pickOp(revertOp, []);
-            }}
             onToggleCombineMode={() => {
               setPendingOp(null);
               setCombineMode((m) => !m);
@@ -417,9 +414,12 @@ export function App() {
             subView={historySubView}
             onSubView={setHistorySubView}
             // §11 Phase 5c click-to-revert: the SAME registry revert op, with
-            // the commit id passed programmatically (no form; {} stays HEAD
-            // for the topbar). Refusals ride the standing banner verbatim.
+            // the commit id passed programmatically (no form; {} stays HEAD).
+            // Refusals ride the standing banner verbatim. F-046: revert-last
+            // lives here too — it undoes the newest commit, so it sits next
+            // to the list it operates on (param-less → runs immediately).
             onRevert={(commitId) => void runOp(revertOp, [], { commit: commitId })}
+            onRevertLast={() => pickOp(revertOp, [])}
             onSelectFrame={setSelectedId}
           />
         )}

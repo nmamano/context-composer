@@ -24,7 +24,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-001 — Frame titles should be auto-generated and auto-populated (not "frame t1" fallback)
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-A (reviewer-signed 2026-06-10; all gates incl. live)
+- status: fixed@16b4062 (batch A; reviewer-signed 2026-06-10; all gates incl. live)
 - what: "frames should have auto-generated titles automatically populated, instead of 'frame t1'. there's already 't1' as a left-aligned label. that's good"
 - where: frame view, all frame cards
 - expected: every frame carries a meaningful auto-generated title; the t-id label covers identity already
@@ -185,7 +185,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-017 — Offload stub default is the first line verbatim, not a summary
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-A (reviewer-signed 2026-06-10; all gates incl. live)
+- status: fixed@16b4062 (batch A; reviewer-signed 2026-06-10; all gates incl. live)
 - what: "the summary seems to just be the user's message verbatim. that's not a summary" (on the F-003 prefill)
 - where: offload form prefill / engine deriveSummary default
 - expected: the default stub reads like a summary of the frame, not its first line
@@ -384,7 +384,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-038 — Add-frame tooltip copy
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "add frame copy: insert text anywhere in the context"
 - where: frames toolbar, add button tooltip
 - expected: verbatim Nil copy
@@ -393,7 +393,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-039 — Add form position field: ambiguous (before/after?) — dropdown wanted
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "'position (frame id / start / end)' -> it's not clear if it appears before or after the frame id. i think also a drop down menu may be better. maybe as alternative?"
 - where: add form, position param
 - expected: explicit AFTER semantics; a dropdown (at the end / at the start / after <each frame>) instead of free text
@@ -403,7 +403,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-040 — Submit buttons: "run add" → "add"; visual style for committing actions
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "'run add' -> 'add' (maybe we can have a unique visual style for buttons that commit transactions)... it would look a bit more 'definitive' or 'serious'."
 - where: op form submit buttons
 - expected: bare verb label + filled "primary action" styling (the standard pattern: filled = commits, outline = neutral/cancel)
@@ -412,7 +412,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-041 — Combine: unclear where the merged frame lands and what the merge logic is
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "'combine 2 selected' ... doesn't make clear where the merged frame lands, or what the merge logic is. straight append or llm rewrite? Need more clarity"
 - where: combine flow copy
 - expected: copy states the truth (verify against engine: mechanical append in selection order, no LLM; landing position per engine semantics) in the combine panel + run-button tooltip
@@ -421,7 +421,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-042 — Homogenize combine with the other toolbar ops: panel + cancel; mutual exclusion
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "'add frame' opens its own panel, with a cancel button. 'combine' doesn't have a panel, and the button itself becomes the way to cancel. let's homogenize. both should have a panel with a cancel button inside. also, clicking one of the 3 buttons should close/auto-cancel the panel for the one that is opened, if any."
 - where: frames toolbar
 - expected: combine mode renders a panel (explainer + run + cancel inside); opening any toolbar op cancels the other open one
@@ -439,7 +439,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-044 — Long tool names force horizontal scrolling in the details panel
 - reported: 2026-06-10 · class: bug
-- status: fixed@batch-7
+- status: fixed@f45a163 (batch 7)
 - what: "two tools ... longer than the side panel (mcp__claude_ai_Vercel__change_toolbar_thread_resolve_status,) added horizontal scrolling to the side panel, which is not good UI. i don't want horizontal scrolling there... i'm more ok with it just clipping"
 - where: details panel, F-036 preamble tool list
 - expected: no horizontal scroll — long unbroken tokens wrap (break-anywhere) or clip
@@ -448,7 +448,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-045 — Mark the latest frame fork-only when it starts with *[SUGGESTION MODE*
 - reported: 2026-06-10 · class: refinement (engine, Nil-decided exception to a locked principle)
-- status: plan-gate-pending (next session: plan review BEFORE implementing)
+- status: plan-gate-sent 2026-06-10 (awaiting Context Reviewer; option A engine-derived inLastView vs option B display-only laid out, lean A)
 - what: "the final frame is often suggestion, but we have no way mechanically to know it's going to become a fork-only frame. i think we may want to make a one-off exception for this, and mark the latest frame as fork-only if it starts with *[SUGGESTION MODE*. I'm aware that this is brittle and can stop working if claude changes the format. i'm ok with that, as the downside is basically what we have now."
 - where: engine fork-only classification (inLastView), frame view filtering
 - expected: a frame whose content starts with the suggestion-mode marker is treated as fork-only immediately (not only after the next main-thread request reveals it wasn't in the view)
@@ -457,18 +457,36 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-046 — "revert last" belongs in the history tab, not the frames toolbar
 - reported: 2026-06-10 · class: refinement
-- status: triaged (next session)
+- status: fixed@batch-8 (reviewer-signed 2026-06-10: no blocking findings, focused tests 29/29)
 - what: "the 'revert last' button seems a bit different than 'add frame' and 'combine'. is it about undoing the last operation in the history, rather than undoing the last frame? if so, i think it should go in the history tab, not this one."
 - where: frames toolbar / history tab
 - expected: ANSWERED: yes — revert undoes the last OPERATION (commit), not the last frame. Move the button to the history tab (next to the commit list it operates on), out of the frames toolbar
 - evidence: pure UI placement; history already has per-commit revert
-- resolution: (next session, pure-UI batch)
+- resolution: in batch 8: button moved to the history sub-nav row (beside the commits|timeline toggle, next to the list it undoes); same registry verb, `{}` = HEAD, placement only; frames toolbar keeps add/combine (F-029). Regressions: history-view "F-046" (placement + POST wiring), op-menu placement asserts updated, app-render tooltip scan covers the history sub-nav, ui:smoke revert flow goes through the history tab.
 
 ## F-047 — Combine should offer the same insert-position menu as add
 - reported: 2026-06-10 · class: refinement (engine + op surface)
-- status: plan-gate-pending (next session)
+- status: plan-gate-sent 2026-06-10 (awaiting Context Reviewer; engine placement + ops.ts param + route param + CLI flag + combine-panel dropdown in one batch)
 - what: "i want to add the same 'insert position' menu as the 'add frame' button" (on combine)
 - where: combine op — engine placement, ops.ts param, control route, CLI flag, UI dropdown
 - expected: combine accepts an optional position (default stays: first pick's slot)
 - evidence: op-surface change → parity rail: ops.ts param + CLI flag + control route param in the SAME batch + plan gate; engine combine() placement support
 - resolution: (next session) plan-gate with Context Reviewer first
+
+## F-048 — Refresh button gives no feedback that anything happened
+- reported: 2026-06-10 (Nil's "7.1") · class: refinement
+- status: triaged
+- what: "the refresh button has no feedback when you click it that anything happened"
+- where: topbar refresh button
+- expected: clicking refresh visibly acknowledges the click (and ideally distinguishes "refetched, nothing new" from "refetched, updated")
+- evidence: pure UI — loadConversation refetches silently; when nothing changed the render is identical, so a successful click is indistinguishable from a dead button
+- resolution: (queued for next pure-UI batch)
+
+## F-049 — History view: commits and timeline should grow downward like the other views
+- reported: 2026-06-10 (Nil's "7.2") · class: refinement
+- status: triaged
+- what: "for history view, commits and timeline should grow downward, just like conversatino and frames views"
+- where: history tab, both sub-views
+- expected: chronological order — oldest at top, newest at bottom (matching conversation + frames); newest stays reachable, likely via open-scrolled-to-bottom + the discreet jump button (the F-020 pattern)
+- evidence: pure UI — both lists deliberately render newest-first since 5c ("the op you just ran is the one you look for"); Nil's report supersedes that lean. Order is derived display state; commit/event truth unchanged
+- resolution: (queued for next pure-UI batch)

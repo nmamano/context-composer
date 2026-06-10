@@ -33,6 +33,10 @@ export function HistoryView(props: {
   subView: HistorySubView;
   onSubView: (v: HistorySubView) => void;
   onRevert: (commitId: string) => void;
+  /** F-046: revert-last lives HERE (it undoes the newest entry in the list
+   *  below, not the latest frame) — moved out of the frames toolbar (Nil).
+   *  Same registry verb, same route, `{}` body = HEAD; placement only. */
+  onRevertLast: () => void;
   onSelectFrame: (id: string) => void;
 }) {
   const rows = commitRows(props.commits);
@@ -63,6 +67,13 @@ export function HistoryView(props: {
           timeline ({evRows.length})
         </button>
       </div>
+      <button
+        className="op-revert"
+        data-tip="undo the latest change — same as undoing the newest entry below"
+        onClick={() => props.onRevertLast()}
+      >
+        revert last
+      </button>
       </div>
 
       <div className="history-scroll">

@@ -27,12 +27,13 @@ export function FrameView(props: {
   showForkOnly?: boolean;
   onToggleForkOnly?: () => void;
   /** F-029: store-scoped ops live HERE, on the manipulation surface — not in
-   *  the nav bar (Nil). Same registry verbs, same routes; placement only. */
+   *  the nav bar (Nil). Same registry verbs, same routes; placement only.
+   *  F-046: revert-last moved to the history tab — it undoes the last COMMIT,
+   *  so it lives next to the commit list it operates on, not here. */
   onAddFrame?: () => void;
-  onRevertLast?: () => void;
   onToggleCombineMode?: () => void;
   onRunCombine?: () => void;
-  /** Zero-target op form (add/revert) renders right under the toolbar. */
+  /** Zero-target op form (add) renders right under the toolbar. */
   toolbarForm?: ReactNode;
 }) {
   const forkCount = props.frames.filter((f) => f.inLastView === false).length;
@@ -48,13 +49,6 @@ export function FrameView(props: {
           onClick={() => props.onAddFrame?.()}
         >
           add frame
-        </button>
-        <button
-          className="op-revert"
-          data-tip="undo the latest change"
-          onClick={() => props.onRevertLast?.()}
-        >
-          revert last
         </button>
         <button
           className={`op-combine ${props.combineMode ? "on" : ""}`}
