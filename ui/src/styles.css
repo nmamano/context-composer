@@ -130,6 +130,10 @@ main > section { flex: 1; overflow-y: auto; padding: 16px; }
   border-bottom: 1px solid var(--border); background: var(--bg-panel);
   padding: 10px 14px;
 }
+/* F-008: frame-scoped forms render inline under the triggering card. */
+.op-form-host.inline {
+  border: 1px solid var(--accent); border-radius: 8px;
+}
 .op-form { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
 .op-form header { font-weight: 600; }
 .op-param { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-dim); }
@@ -230,6 +234,15 @@ main > section { flex: 1; overflow-y: auto; padding: 16px; }
   background: none; border: none; color: var(--text-dim);
   font-size: 18px; cursor: pointer;
 }
+/* F-016: chips row in the details panel is always rendered (reserved height)
+   so the field rows below don't shift between flagged and clean frames. */
+.details-panel .chips-reserved { min-height: 21px; }
+/* F-015: core/all fields toggle. */
+.fields-toggle {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 0; margin: 0 0 8px;
+}
+.fields-toggle:hover { text-decoration: underline; }
 .details-fields { margin: 10px 0; }
 .details-row { display: flex; gap: 8px; padding: 2px 0; font-size: 13px; }
 .details-row dt { width: 130px; color: var(--text-dim); flex-shrink: 0; }

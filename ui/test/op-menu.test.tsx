@@ -365,6 +365,64 @@ test("ops are never hidden by frame state (a deleted frame still offers the full
   }
 });
 
+test("F-002: an open ops menu dismisses on outside click (and stays open on inside click)", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  const menu = container.querySelector('.op-menu[data-frame-id="f1"]')!;
+  await act(async () => menu.setAttribute("open", ""));
+  // Click INSIDE the open menu (the list padding) — stays open.
+  await act(async () => click(menu.querySelector("ul")!));
+  expect(menu.hasAttribute("open")).toBe(true);
+  // Click OUTSIDE (another frame card) — closes.
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f2"]')!));
+  expect(menu.hasAttribute("open")).toBe(false);
+});
+
+test("F-003: offload form opens with the stub summary PREFILLED (engine-default preview), submitted explicitly", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () =>
+    click(container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="offload"]')!),
+  );
+  const input = container.querySelector(
+    '.op-form[data-op="offload"] input[type="text"]',
+  ) as HTMLInputElement;
+  // f1's emission is [{role:"user",content:"one"}] → deriveSummary → "one".
+  expect(input.value).toBe("one");
+  await act(async () =>
+    click(container.querySelector('.op-form[data-op="offload"] button[type="submit"]')!),
+  );
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  // The prefill rides the body verbatim — the same value the daemon would
+  // have derived had the param been omitted.
+  expect(posts[0]!.body).toEqual({ id: "f1", summary: "one" });
+});
+
+test("F-008: frame-scoped forms render inline under the triggering card; topbar forms keep the top host", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () =>
+    click(container.querySelector('.op-menu[data-frame-id="f2"] button[data-verb="edit"]')!),
+  );
+  const inlineHost = container.querySelector(".op-form-host")!;
+  expect(inlineHost.classList.contains("inline")).toBe(true);
+  // Placed immediately after the card it targets, inside the frame view.
+  const card = container.querySelector('.frame-card[data-frame-id="f2"]')!;
+  expect(card.nextElementSibling).toBe(inlineHost);
+  expect(inlineHost.closest(".frame-view")).not.toBeNull();
+  // Cancel, then a topbar (store-scoped) op: form renders in the top host.
+  await act(async () => click(inlineHost.querySelector('.op-form-actions button[type="button"]')!));
+  await act(async () => click(container.querySelector(".store-ops .op-add")!));
+  const topHost = container.querySelector(".op-form-host")!;
+  expect(topHost.classList.contains("inline")).toBe(false);
+  expect(topHost.closest(".frame-view")).toBeNull();
+});
+
 test("every registry op with params declares only renderable kinds", () => {
   for (const op of OP_REGISTRY) {
     for (const p of op.params) {

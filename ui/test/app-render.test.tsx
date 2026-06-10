@@ -270,3 +270,66 @@ test("App: conversation view hides tombstones, frame view flags them, details pa
     root?.unmount();
   });
 });
+
+async function renderApp() {
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { App } = await import("../src/App.tsx");
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const r = createRoot(container);
+  await act(async () => {
+    r.render(createElement(App));
+  });
+  await flush(act);
+  const tab = (name: string) =>
+    Array.from(container.querySelectorAll(".view-toggle button")).find(
+      (b) => b.textContent === name,
+    )!;
+  return { container, act, tab, unmount: () => act(async () => r.unmount()) };
+}
+
+// F-014 (plans/ui-feedback.md): a details selection carried INTO history is
+// stale context — hidden there, restored on exit; an explicit selection made
+// inside history (frame links) still opens the panel.
+test("F-014: details panel is stashed entering history and restored on leaving", async () => {
+  const { container, act, tab, unmount } = await renderApp();
+  await act(async () => click(tab("frames")));
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
+  expect(container.querySelector(".details-panel")).not.toBeNull();
+
+  await act(async () => click(tab("history")));
+  expect(container.querySelector(".details-panel")).toBeNull();
+
+  await act(async () => click(tab("frames")));
+  const panel = container.querySelector(".details-panel");
+  expect(panel).not.toBeNull();
+  expect(panel!.querySelector("h2")!.textContent).toBe("greeting"); // f1 restored
+  await unmount();
+});
+
+// F-015/F-016: the panel defaults to the core subset with the chips row
+// reserved; show-all reveals the advanced fields.
+test("F-015: details panel shows core fields by default; toggle reveals advanced", async () => {
+  const { container, act, tab, unmount } = await renderApp();
+  await act(async () => click(tab("frames")));
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f3"]')!));
+  const labels = () =>
+    Array.from(container.querySelectorAll(".details-row dt")).map((e) => e.textContent);
+  // Core subset: identity + emission-state fields.
+  expect(labels()).toContain("id");
+  expect(labels()).toContain("offloaded");
+  expect(labels()).toContain("fileReference");
+  // Audit fields hidden by default…
+  expect(labels()).not.toContain("provenance");
+  expect(labels()).not.toContain("origin");
+  // …revealed by the toggle.
+  await act(async () => click(container.querySelector(".fields-toggle")!));
+  expect(labels()).toContain("provenance");
+  expect(labels()).toContain("origin");
+  expect(labels()).toContain("kind");
+  // F-016: chips row exists even for a clean frame (reserved space).
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
+  expect(container.querySelector(".details-panel .chips-reserved")).not.toBeNull();
+  await unmount();
+});

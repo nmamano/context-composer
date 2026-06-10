@@ -8,7 +8,7 @@
 // param gating is allowed, the daemon's refusal is the source of truth for
 // everything else.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { OpSpec, ParamSpec } from "../../../src/shared/ops.ts";
 import { singleTargetOps } from "../../../src/shared/ops.ts";
 
@@ -60,11 +60,14 @@ function ParamField(props: {
 
 export function OpForm(props: {
   op: OpSpec;
+  /** F-003: prefilled values (previews of engine defaults — see prefill.ts).
+   *  The caller keys this component so a new target remounts with fresh state. */
+  initial?: FormValues;
   /** Presence-gating only: required params must be non-empty before POST. */
   onSubmit: (values: FormValues) => void;
   onCancel: () => void;
 }) {
-  const [values, setValues] = useState<FormValues>({});
+  const [values, setValues] = useState<FormValues>(props.initial ?? {});
   const missing = props.op.params.filter(
     (p) =>
       p.required &&
@@ -107,8 +110,22 @@ export function OpMenu(props: {
   /** Run a no-param op immediately; ops with params open their form. */
   onPick: (op: OpSpec) => void;
 }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  // F-002 (plans/ui-feedback.md): an open menu dismisses on any click outside
+  // it — not only by re-clicking the summary. Capture phase, so clicks whose
+  // bubbling something stops still close the menu.
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const d = ref.current;
+      if (d?.open && e.target instanceof Node && !d.contains(e.target)) {
+        d.removeAttribute("open");
+      }
+    };
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+  }, []);
   return (
-    <details className="op-menu" data-frame-id={props.frameId}>
+    <details ref={ref} className="op-menu" data-frame-id={props.frameId}>
       <summary aria-label={`ops for ${props.frameId}`}>ops ▾</summary>
       <ul>
         {singleTargetOps().map((op) => (

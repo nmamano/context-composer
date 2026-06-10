@@ -33,6 +33,7 @@ import { FrameView } from "./components/FrameView.tsx";
 import { DetailsPanel } from "./components/DetailsPanel.tsx";
 import { OpForm, type FormValues } from "./components/OpMenu.tsx";
 import { HistoryView, type HistorySubView } from "./components/HistoryView.tsx";
+import { opPrefill } from "./prefill.ts";
 
 export type ViewMode = "conversation" | "frames" | "history";
 
@@ -52,6 +53,8 @@ interface Loaded {
 interface PendingOp {
   op: OpSpec;
   targets: string[];
+  /** F-003: prefilled form values — previews of engine defaults (prefill.ts). */
+  initial: FormValues;
 }
 
 interface OpError {
@@ -72,6 +75,10 @@ export function App() {
   const [combineMode, setCombineMode] = useState(false);
   const [combineIds, setCombineIds] = useState<string[]>([]);
   const [historySubView, setHistorySubView] = useState<HistorySubView>("commits");
+  /** F-014: a selection carried INTO the history tab is stale context there —
+   *  it's stashed on entry and restored on exit. Selecting a frame WHILE in
+   *  history (frame links) still opens the panel. */
+  const [stashedId, setStashedId] = useState<string | null>(null);
   const inFlight = useRef(false);
 
   /** The single data path: conversations → list + compose meta → show() per
@@ -148,16 +155,36 @@ export function App() {
     [loaded, loadConversation],
   );
 
-  /** Menu pick: param-less ops run immediately; others open the generated form. */
+  /** Menu pick: param-less ops run immediately; others open the generated form
+   *  (prefilled where prefill.ts previews an engine default — F-003). */
   const pickOp = useCallback(
     (op: OpSpec, targets: string[]) => {
       if (op.params.length === 0) {
         void runOp(op, targets, {});
       } else {
-        setPendingOp({ op, targets });
+        const frames = targets
+          .map((id) => loaded?.details.get(id))
+          .filter((f): f is Frame => f != null);
+        setPendingOp({ op, targets, initial: opPrefill(op, frames) });
       }
     },
-    [runOp],
+    [runOp, loaded],
+  );
+
+  /** F-014: tab switch with the details-selection stash (see state above). */
+  const switchView = useCallback(
+    (v: ViewMode) => {
+      if (v === view) return;
+      if (v === "history") {
+        setStashedId(selectedId);
+        setSelectedId(null);
+      } else if (view === "history") {
+        if (selectedId === null && stashedId !== null) setSelectedId(stashedId);
+        setStashedId(null);
+      }
+      setView(v);
+    },
+    [view, selectedId, stashedId],
   );
 
   const toggleCombine = useCallback((id: string) => {
@@ -177,6 +204,27 @@ export function App() {
   const revertOp = opByVerb("revert")!;
   const combineOp = opByVerb("combine")!;
 
+  // F-008: where does the pending form live this render?
+  const inlineFormFrameId =
+    pendingOp && view === "frames" && pendingOp.targets.length === 1
+      ? pendingOp.targets[0]!
+      : null;
+  const opFormHost = pendingOp ? (
+    <div className={`op-form-host${inlineFormFrameId ? " inline" : ""}`}>
+      <OpForm
+        // Remount per op+target so prefilled values reset with the target.
+        key={`${pendingOp.op.verb}:${pendingOp.targets.join(",")}`}
+        op={pendingOp.op}
+        initial={pendingOp.initial}
+        onSubmit={(values) => void runOp(pendingOp.op, pendingOp.targets, values)}
+        onCancel={() => setPendingOp(null)}
+      />
+      {pendingOp.targets.length > 0 && (
+        <p className="op-form-target">target: {pendingOp.targets.join(", ")}</p>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="app">
       <header className="topbar">
@@ -187,6 +235,7 @@ export function App() {
           value={loaded?.conv ?? ""}
           onChange={(e) => {
             setSelectedId(null);
+            setStashedId(null);
             setCombineMode(false);
             setCombineIds([]);
             void loadConversation(e.target.value);
@@ -205,7 +254,7 @@ export function App() {
             role="tab"
             aria-selected={view === "conversation"}
             className={view === "conversation" ? "on" : ""}
-            onClick={() => setView("conversation")}
+            onClick={() => switchView("conversation")}
           >
             conversation
           </button>
@@ -213,7 +262,7 @@ export function App() {
             role="tab"
             aria-selected={view === "frames"}
             className={view === "frames" ? "on" : ""}
-            onClick={() => setView("frames")}
+            onClick={() => switchView("frames")}
           >
             frames
           </button>
@@ -221,7 +270,7 @@ export function App() {
             role="tab"
             aria-selected={view === "history"}
             className={view === "history" ? "on" : ""}
-            onClick={() => setView("history")}
+            onClick={() => switchView("history")}
           >
             history
           </button>
@@ -279,18 +328,11 @@ export function App() {
         </div>
       )}
 
-      {pendingOp && (
-        <div className="op-form-host">
-          <OpForm
-            op={pendingOp.op}
-            onSubmit={(values) => void runOp(pendingOp.op, pendingOp.targets, values)}
-            onCancel={() => setPendingOp(null)}
-          />
-          {pendingOp.targets.length > 0 && (
-            <p className="op-form-target">target: {pendingOp.targets.join(", ")}</p>
-          )}
-        </div>
-      )}
+      {/* F-008: a single-target form opened in the frame view renders INLINE
+          under its card (slot passed to FrameView below); store-scoped forms
+          (topbar: add) and forms visible from other views keep the top host —
+          a pending form is never invisible. */}
+      {pendingOp && !inlineFormFrameId && opFormHost}
 
       <main className={selected ? "with-details" : ""}>
         {!loaded ? (
@@ -314,6 +356,8 @@ export function App() {
             combineMode={combineMode}
             combineIds={combineIds}
             onToggleCombine={toggleCombine}
+            opFormFrameId={inlineFormFrameId}
+            opForm={opFormHost}
           />
         ) : (
           <HistoryView

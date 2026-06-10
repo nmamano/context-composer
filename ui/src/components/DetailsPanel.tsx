@@ -5,6 +5,7 @@
 // API exists and 5a adds none); the source section appears when an override
 // makes them differ (it's what the agent's resend keeps refreshing).
 
+import { useState } from "react";
 import type { Frame } from "../../../src/engine/types.ts";
 import type { FrameSummary } from "../../../src/engine/state.ts";
 import { detailsFields } from "../details.ts";
@@ -47,6 +48,13 @@ export function DetailsPanel(props: {
 }) {
   const f = props.frame;
   const overridden = f.representation != null;
+  // F-015: beginner-friendly default — core rows only; the toggle reveals the
+  // full set. Deliberately NOT keyed per frame: the mode sticks while the user
+  // walks frames, which is exactly when stable rows (F-016) matter.
+  const [showAll, setShowAll] = useState(false);
+  const rows = detailsFields(f);
+  const visible = showAll ? rows : rows.filter((r) => r.tier === "core");
+  const hiddenCount = rows.length - visible.length;
   return (
     <aside className="details-panel" aria-label="frame details">
       <header>
@@ -55,23 +63,33 @@ export function DetailsPanel(props: {
           ×
         </button>
       </header>
-      {props.summary && (
-        <ul className="chips">
-          {frameFlags(props.summary).map((c) => (
-            <li key={c.key} className={`chip chip-${c.key}`}>
-              {c.label}
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* F-016: the chips row is ALWAYS rendered (reserved height) so the
+          field rows below sit at the same position on flagged and clean
+          frames alike. */}
+      <ul className="chips chips-reserved">
+        {props.summary
+          ? frameFlags(props.summary).map((c) => (
+              <li key={c.key} className={`chip chip-${c.key}`}>
+                {c.label}
+              </li>
+            ))
+          : null}
+      </ul>
       <dl className="details-fields">
-        {detailsFields(f).map((row) => (
+        {visible.map((row) => (
           <div key={row.label} className="details-row">
             <dt>{row.label}</dt>
             <dd>{row.value}</dd>
           </div>
         ))}
       </dl>
+      <button
+        type="button"
+        className="fields-toggle"
+        onClick={() => setShowAll((s) => !s)}
+      >
+        {showAll ? "show fewer fields" : `show all fields (${hiddenCount} more)`}
+      </button>
       <Messages
         messages={currentEmission(f)}
         label={

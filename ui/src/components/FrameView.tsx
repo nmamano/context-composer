@@ -4,6 +4,7 @@
 // never hidden/disabled by frame STATE — the daemon's guards speak (reviewer
 // condition); the SVG git-tree stays parked until branches exist (Phase 4).
 
+import { Fragment, type ReactNode } from "react";
 import type { FrameSummary } from "../../../src/engine/state.ts";
 import type { OpSpec } from "../../../src/shared/ops.ts";
 import { frameFlags } from "../flags.ts";
@@ -17,6 +18,10 @@ export function FrameView(props: {
   combineMode: boolean;
   combineIds: string[];
   onToggleCombine: (id: string) => void;
+  /** F-008: a pending frame-scoped op form renders INLINE, directly under the
+   *  card it targets (App owns the form; this is just the placement slot). */
+  opFormFrameId?: string | null;
+  opForm?: ReactNode;
 }) {
   if (props.frames.length === 0) {
     return <p className="empty">no frames yet</p>;
@@ -26,8 +31,8 @@ export function FrameView(props: {
       {props.frames.map((f) => {
         const chips = frameFlags(f);
         return (
+          <Fragment key={f.id}>
           <article
-            key={f.id}
             data-frame-id={f.id}
             className={[
               "frame-card",
@@ -69,6 +74,8 @@ export function FrameView(props: {
               </ul>
             )}
           </article>
+          {props.opFormFrameId === f.id && props.opForm}
+          </Fragment>
         );
       })}
     </section>
