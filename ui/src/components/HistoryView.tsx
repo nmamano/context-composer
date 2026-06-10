@@ -39,15 +39,16 @@ export function HistoryView(props: {
   const evRows = eventRows(props.events);
   return (
     <section className="history-view" aria-label="history view">
-      {/* F-019: full-width sticky backdrop row — entries scrolling past can
-          never show through beside/above the toggle. */}
+      {/* F-026: a FIXED sub-nav — the toggle row sits OUTSIDE the scroll area
+          (entries scroll in .history-scroll below), so it never moves and
+          nothing can pass it. Replaces the F-019 sticky-backdrop approach. */}
       <div className="history-subtoggle-row">
       <div className="history-subtoggle" role="tablist">
         <button
           role="tab"
           aria-selected={props.subView === "commits"}
           className={props.subView === "commits" ? "on" : ""}
-          title="operations as commits — params, before/after diff, click-to-revert"
+          data-tip="changes you've made, with before/after — click revert to undo one"
           onClick={() => props.onSubView("commits")}
         >
           commits ({rows.length})
@@ -56,7 +57,7 @@ export function HistoryView(props: {
           role="tab"
           aria-selected={props.subView === "timeline"}
           className={props.subView === "timeline" ? "on" : ""}
-          title="the full audit log — every capture and operation, in order"
+          data-tip="everything that happened in this conversation, in order"
           onClick={() => props.onSubView("timeline")}
         >
           timeline ({evRows.length})
@@ -64,6 +65,7 @@ export function HistoryView(props: {
       </div>
       </div>
 
+      <div className="history-scroll">
       {props.subView === "commits" ? (
         rows.length === 0 ? (
           <p className="empty">no commits yet — ops record here</p>
@@ -83,6 +85,7 @@ export function HistoryView(props: {
                 <button
                   className="commit-revert"
                   data-commit-id={c.id}
+                  data-tip="undo this change"
                   onClick={() => props.onRevert(c.id)}
                 >
                   revert
@@ -142,6 +145,7 @@ export function HistoryView(props: {
           </article>
         ))
       )}
+      </div>
     </section>
   );
 }

@@ -63,7 +63,7 @@ export function DetailsPanel(props: {
           className="close"
           onClick={props.onClose}
           aria-label="close details"
-          title="close details"
+          data-tip="close"
         >
           ×
         </button>
@@ -91,7 +91,7 @@ export function DetailsPanel(props: {
       <button
         type="button"
         className="fields-toggle"
-        title="toggle between the beginner-friendly subset and every metadata field"
+        data-tip="show more or fewer details about this frame"
         onClick={() => setShowAll((s) => !s)}
       >
         {showAll ? "show fewer fields" : `show all fields (${hiddenCount} more)`}

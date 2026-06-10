@@ -369,7 +369,8 @@ try {
   const afterRestore = (await freshList()).find((f) => f.id === C.id)!;
   check(!afterRestore.offloaded, `restore ${C.id} re-inlined the emission (API oracle)`);
 
-  // -- retitle B, then store-scoped revert(last) from the topbar ----------------
+  // -- retitle B, then store-scoped revert(last) from the frames toolbar
+  //    (F-029: store ops live in the frame view, not the nav bar) -------------
   const oldTitle = B.title;
   await openMenuAndPick(B.id, "retitle");
   await page
@@ -392,7 +393,7 @@ try {
   );
   check(
     (await freshList()).find((f) => f.id === B.id)!.title === oldTitle,
-    "revert(last) undid the retitle (store-scoped, topbar)",
+    "revert(last) undid the retitle (store-scoped, frames toolbar)",
   );
 
   await shot(page, "ops");

@@ -26,29 +26,69 @@ export function FrameView(props: {
    *  still the truth — strictly inLastView === false, null is NOT fork-only). */
   showForkOnly?: boolean;
   onToggleForkOnly?: () => void;
+  /** F-029: store-scoped ops live HERE, on the manipulation surface — not in
+   *  the nav bar (Nil). Same registry verbs, same routes; placement only. */
+  onAddFrame?: () => void;
+  onRevertLast?: () => void;
+  onToggleCombineMode?: () => void;
+  onRunCombine?: () => void;
+  /** Zero-target op form (add/revert) renders right under the toolbar. */
+  toolbarForm?: ReactNode;
 }) {
-  if (props.frames.length === 0) {
-    return <p className="empty">no frames yet</p>;
-  }
   const forkCount = props.frames.filter((f) => f.inLastView === false).length;
   const visible = props.showForkOnly
     ? props.frames
     : props.frames.filter((f) => f.inLastView !== false);
   return (
     <section className="frame-view" aria-label="frame view">
-      {forkCount > 0 && (
-        <label
-          className="fork-toggle"
-          title="fork-only frames rode forked requests (sub-agents, side calls) and never joined the main thread — context inspection only"
+      <div className="store-ops frame-toolbar">
+        <button
+          className="op-add"
+          data-tip="insert a new block of text into the conversation"
+          onClick={() => props.onAddFrame?.()}
         >
-          <input
-            type="checkbox"
-            checked={props.showForkOnly === true}
-            onChange={() => props.onToggleForkOnly?.()}
-          />
-          show fork-only frames ({forkCount})
-        </label>
-      )}
+          add frame
+        </button>
+        <button
+          className="op-revert"
+          data-tip="undo the latest change"
+          onClick={() => props.onRevertLast?.()}
+        >
+          revert last
+        </button>
+        <button
+          className={`op-combine ${props.combineMode ? "on" : ""}`}
+          data-tip="merge several frames into one — pick the frames, then run"
+          onClick={() => props.onToggleCombineMode?.()}
+        >
+          {props.combineMode ? "cancel combine" : "combine…"}
+        </button>
+        {props.combineMode && (
+          <button
+            className="op-combine-run"
+            disabled={props.combineIds.length < 2}
+            data-tip="merge the selected frames, in selection order"
+            onClick={() => props.onRunCombine?.()}
+          >
+            combine {props.combineIds.length} selected
+          </button>
+        )}
+        {forkCount > 0 && (
+          <label
+            className="fork-toggle"
+            title="show frames from side requests (e.g. sub-agents) that aren't part of the main conversation"
+          >
+            <input
+              type="checkbox"
+              checked={props.showForkOnly === true}
+              onChange={() => props.onToggleForkOnly?.()}
+            />
+            show fork-only frames ({forkCount})
+          </label>
+        )}
+      </div>
+      {props.toolbarForm}
+      {props.frames.length === 0 && <p className="empty">no frames yet</p>}
       {visible.map((f) => {
         const chips = frameFlags(f);
         return (

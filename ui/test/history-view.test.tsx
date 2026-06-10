@@ -230,8 +230,12 @@ test("click-to-revert posts the registry revert with a programmatic {commit}", a
   expect(container.querySelector(".op-form")).toBeNull();
 });
 
-test("topbar revert-last still posts {} (5b behavior preserved)", async () => {
+test("frames-toolbar revert-last still posts {} (5b behavior preserved; F-029 moved it off the topbar)", async () => {
   const { container, act } = await renderApp();
+  const framesTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+    (b) => b.textContent === "frames",
+  )!;
+  await act(async () => click(framesTab));
   await act(async () => click(container.querySelector(".store-ops .op-revert")!));
   await flush(act);
   expect(posts).toHaveLength(1);

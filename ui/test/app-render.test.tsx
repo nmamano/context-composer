@@ -333,7 +333,8 @@ test("F-009: conv identity rendered selectable; copy button copies the full key"
   const { container, act, unmount } = await renderApp();
   const code = container.querySelector(".conv-key code")!;
   expect(code).not.toBeNull();
-  expect(code.textContent).toContain("conv-1");
+  // F-030: the span carries the KEY only — the id already sits in the switcher.
+  expect(code.textContent).not.toContain("conv-1");
   expect(code.textContent).toContain("k1");
   expect(container.querySelector(".conv-key")!.getAttribute("title")).toContain("k1");
   // Stub the clipboard API; the button must copy the FULL key.
@@ -413,22 +414,30 @@ test("F-018/F-020: conversation view jumps to the selected frame on entry; jump 
   }
 });
 
-// F-021: every interactive control explains itself — title (or aria-label)
-// present and non-empty on all topbar buttons and the ops-menu summary.
-test("F-021: all topbar controls carry explanation tooltips", async () => {
+// F-021/F-028/F-031: every interactive control explains itself via data-tip
+// (instant CSS tooltip; the <select> keeps native title) — and the copy is
+// plain language: no engine jargon (Nil's F-028 words: emission/audit).
+test("F-021/F-028: all controls carry tooltips, free of jargon", async () => {
   const { container, act, tab, unmount } = await renderApp();
-  const topbarButtons = Array.from(
+  const tipOf = (el: Element) =>
+    el.getAttribute("data-tip") ?? el.getAttribute("title") ?? "";
+  const topbarControls = Array.from(
     container.querySelectorAll(".topbar button, .topbar select"),
   );
-  expect(topbarButtons.length).toBeGreaterThanOrEqual(7); // tabs, store-ops, copy, refresh, switcher
-  for (const el of topbarButtons) {
-    const tip = el.getAttribute("title") ?? "";
-    expect(tip.length).toBeGreaterThan(0);
-  }
-  // The per-frame ops menu trigger too.
+  expect(topbarControls.length).toBeGreaterThanOrEqual(5); // 3 tabs, copy, refresh (+switcher)
+  for (const el of topbarControls) expect(tipOf(el).length).toBeGreaterThan(0);
+  // Frames view: toolbar store-ops + the per-frame ops trigger.
   await act(async () => click(tab("frames")));
-  const summary = container.querySelector(".op-menu summary")!;
-  expect((summary.getAttribute("title") ?? "").length).toBeGreaterThan(0);
+  for (const sel of [".store-ops .op-add", ".store-ops .op-revert", ".store-ops .op-combine", ".op-menu summary"]) {
+    expect(tipOf(container.querySelector(sel)!).length).toBeGreaterThan(0);
+  }
+  // F-028: jargon words banned from every tooltip in the app.
+  const allTips = Array.from(container.querySelectorAll("[data-tip], [title]")).map(tipOf);
+  for (const word of ["emission", "audit", "registry", "arity"]) {
+    for (const tip of allTips) {
+      expect(tip.toLowerCase()).not.toContain(word);
+    }
+  }
   await unmount();
 });
 

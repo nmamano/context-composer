@@ -182,10 +182,14 @@ test("op menu is GENERATED from the registry — every single-target verb, nothi
     container.querySelectorAll('.op-menu[data-frame-id="f1"] button[data-verb]'),
   ).map((b) => b.getAttribute("data-verb"));
   expect(menuButtons).toEqual(singleTargetOps().map((o) => o.verb));
-  // Store-scoped ops (none-arity) live in the topbar instead.
-  expect(container.querySelector(".store-ops .op-add")).not.toBeNull();
-  expect(container.querySelector(".store-ops .op-revert")).not.toBeNull();
-  expect(container.querySelector(".store-ops .op-combine")).not.toBeNull();
+  // F-029: store-scoped ops (none-arity) live in the FRAMES-VIEW toolbar —
+  // deliberately not in the nav bar.
+  expect(container.querySelector(".frame-view .store-ops .op-add")).not.toBeNull();
+  expect(container.querySelector(".frame-view .store-ops .op-revert")).not.toBeNull();
+  expect(container.querySelector(".frame-view .store-ops .op-combine")).not.toBeNull();
+  expect(container.querySelector(".topbar .op-add")).toBeNull();
+  expect(container.querySelector(".topbar .op-revert")).toBeNull();
+  expect(container.querySelector(".topbar .op-combine")).toBeNull();
 });
 
 test("param-less op (delete) POSTs the registry body and refetches both views' sources", async () => {
@@ -319,8 +323,9 @@ test("combine: selection mode collects ids in click order and POSTs {ids}", asyn
   expect(posts[0]!.body).toEqual({ ids: ["f2", "f1"] });
 });
 
-test("revert(last) from the topbar POSTs {} to /control/revert with explicit conv", async () => {
+test("revert(last) from the frames toolbar POSTs {} to /control/revert with explicit conv", async () => {
   const { container, act } = await renderApp();
+  await openFrameView(container, act);
   await act(async () => click(container.querySelector(".store-ops .op-revert")!));
   for (let i = 0; i < 4; i++) {
     await act(async () => {
@@ -332,8 +337,9 @@ test("revert(last) from the topbar POSTs {} to /control/revert with explicit con
   expect(posts[0]!.body).toEqual({});
 });
 
-test("add: explicit position mapping (start → after:null) via the topbar form", async () => {
+test("add: explicit position mapping (start → after:null) via the frames-toolbar form", async () => {
   const { container, act } = await renderApp();
+  await openFrameView(container, act);
   await act(async () => click(container.querySelector(".store-ops .op-add")!));
   const form = container.querySelector('.op-form[data-op="add"]')!;
   const ta = form.querySelector("textarea") as HTMLTextAreaElement;
@@ -403,7 +409,7 @@ test("F-003: offload form opens with the stub summary PREFILLED (engine-default 
   expect(posts[0]!.body).toEqual({ id: "f1", summary: "one" });
 });
 
-test("F-008: frame-scoped forms render inline under the triggering card; topbar forms keep the top host", async () => {
+test("F-008/F-029: forms render next to their trigger — under the card, or under the frames toolbar", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   await act(async () =>
@@ -415,12 +421,26 @@ test("F-008: frame-scoped forms render inline under the triggering card; topbar 
   const card = container.querySelector('.frame-card[data-frame-id="f2"]')!;
   expect(card.nextElementSibling).toBe(inlineHost);
   expect(inlineHost.closest(".frame-view")).not.toBeNull();
-  // Cancel, then a topbar (store-scoped) op: form renders in the top host.
+  // Cancel, then a store-scoped op (add): form renders under the toolbar,
+  // still inside the frame view (F-029).
   await act(async () => click(inlineHost.querySelector('.op-form-actions button[type="button"]')!));
   await act(async () => click(container.querySelector(".store-ops .op-add")!));
+  const toolbarHost = container.querySelector(".op-form-host")!;
+  expect(toolbarHost.classList.contains("toolbar")).toBe(true);
+  expect(toolbarHost.closest(".frame-view")).not.toBeNull();
+  expect(
+    container.querySelector(".frame-toolbar")!.nextElementSibling,
+  ).toBe(toolbarHost);
+  // Switching views with the form still pending: it falls back to the top
+  // host — a pending form is never invisible.
+  const convTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+    (b) => b.textContent === "conversation",
+  )!;
+  await act(async () => click(convTab));
   const topHost = container.querySelector(".op-form-host")!;
-  expect(topHost.classList.contains("inline")).toBe(false);
+  expect(topHost.classList.contains("toolbar")).toBe(false);
   expect(topHost.closest(".frame-view")).toBeNull();
+  expect(container.querySelector('.op-form[data-op="add"]')).not.toBeNull();
 });
 
 test("every registry op with params declares only renderable kinds", () => {

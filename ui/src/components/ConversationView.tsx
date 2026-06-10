@@ -75,7 +75,7 @@ export function ConversationView(props: {
         type="button"
         className="jump-bottom"
         aria-label="scroll to latest turn"
-        title="scroll to the latest turn"
+        data-tip="jump to the latest message"
         onClick={() => {
           const el = sectionRef.current;
           if (el) el.scrollTop = el.scrollHeight;

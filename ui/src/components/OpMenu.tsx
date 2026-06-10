@@ -128,7 +128,7 @@ export function OpMenu(props: {
     <details ref={ref} className="op-menu" data-frame-id={props.frameId}>
       <summary
         aria-label={`ops for ${props.frameId}`}
-        title="operations on this frame — same verbs as the ctx CLI; the daemon's guards decide what's allowed"
+        data-tip="edit this frame — delete, rewrite, offload and more"
       >
         ops ▾
       </summary>

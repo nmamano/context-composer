@@ -213,9 +213,11 @@ export function App() {
   const combineOp = opByVerb("combine")!;
   const activeKey = (loaded && convs.find((c) => c.id === loaded.conv)?.key) || null;
 
-  // F-008: where does the pending form live this render? Inline only when the
-  // target's card is actually visible (F-006 can hide fork-only cards — a
-  // pending form must never be invisible).
+  // F-008/F-029: where does the pending form live this render? Single-target
+  // forms sit under their card (only if that card is visible — F-006 can hide
+  // fork-only cards); zero-target forms (add/revert) sit under the frames-view
+  // toolbar that triggered them. Any other view: the top host — a pending form
+  // is never invisible.
   const targetVisible = (id: string) =>
     showForkOnly ||
     loaded?.frames.find((f) => f.id === id)?.inLastView !== false;
@@ -226,8 +228,12 @@ export function App() {
     targetVisible(pendingOp.targets[0]!)
       ? pendingOp.targets[0]!
       : null;
+  const toolbarFormActive =
+    pendingOp !== null && view === "frames" && pendingOp.targets.length === 0;
   const opFormHost = pendingOp ? (
-    <div className={`op-form-host${inlineFormFrameId ? " inline" : ""}`}>
+    <div
+      className={`op-form-host${inlineFormFrameId ? " inline" : ""}${toolbarFormActive ? " toolbar" : ""}`}
+    >
       <OpForm
         // Remount per op+target so prefilled values reset with the target.
         key={`${pendingOp.op.verb}:${pendingOp.targets.join(",")}`}
@@ -268,25 +274,22 @@ export function App() {
             </option>
           ))}
         </select>
-        {loaded && (
+        {loaded && activeKey && (
           <span
             className="conv-key"
-            title={`conversation key: ${activeKey ?? "(none)"}`}
+            title={`conversation key: ${activeKey}`}
           >
-            {/* F-009: the active conversation's identity — selectable
-                (user-select: all) and one-click copyable (FULL key; plain-http
-                clipboard fallback in copy.ts). */}
-            <code>
-              {loaded.conv}
-              {activeKey ? ` · ${activeKey.slice(0, 8)}` : ""}
-            </code>
+            {/* F-009/F-030: the key prefix only (the id already sits in the
+                selector) — selectable (user-select: all), copy button puts the
+                FULL key on the clipboard (plain-http fallback in copy.ts). */}
+            <code>{activeKey.slice(0, 8)}</code>
             <button
               type="button"
               className="copy-key"
               aria-label="copy conversation key"
-              title="copy the full conversation key"
+              data-tip="copy this conversation's full ID"
               onClick={() => {
-                copyText(activeKey ?? loaded.conv);
+                copyText(activeKey);
                 setCopied(true);
                 window.setTimeout(() => setCopied(false), 1200);
               }}
@@ -296,12 +299,13 @@ export function App() {
           </span>
         )}
         <div className="view-toggle" role="tablist">
-          {/* F-021: every control explains itself on hover. */}
+          {/* F-021/F-028: every control explains itself — plain language, no
+              engine jargon (Nil). F-031: data-tip renders instantly via CSS. */}
           <button
             role="tab"
             aria-selected={view === "conversation"}
             className={view === "conversation" ? "on" : ""}
-            title="chat rendering of what the model currently sees (the emission)"
+            data-tip="read the conversation as a chat"
             onClick={() => switchView("conversation")}
           >
             conversation
@@ -310,7 +314,7 @@ export function App() {
             role="tab"
             aria-selected={view === "frames"}
             className={view === "frames" ? "on" : ""}
-            title="the manipulation surface — every frame as a card with its ops menu"
+            data-tip="inspect and edit the pieces that make up the conversation"
             onClick={() => switchView("frames")}
           >
             frames
@@ -319,54 +323,18 @@ export function App() {
             role="tab"
             aria-selected={view === "history"}
             className={view === "history" ? "on" : ""}
-            title="commit log (with diffs and click-to-revert) and the full audit timeline"
+            data-tip="review past changes and undo them"
             onClick={() => switchView("history")}
           >
             history
           </button>
         </div>
-        {loaded && (
-          <div className="store-ops">
-            {/* Store-scoped ops (arity none) live in the topbar, not on cards. */}
-            <button
-              className="op-add"
-              title="insert a new frame into the context (op: add)"
-              onClick={() => pickOp(addOp, [])}
-            >
-              add frame
-            </button>
-            <button
-              className="op-revert"
-              title="undo the most recent operation (op: revert)"
-              onClick={() => pickOp(revertOp, [])}
-            >
-              revert last
-            </button>
-            <button
-              className={`op-combine ${combineMode ? "on" : ""}`}
-              title="select multiple frames in the frame view to merge into one (op: combine)"
-              onClick={() => {
-                setCombineMode((m) => !m);
-                setCombineIds([]);
-              }}
-            >
-              {combineMode ? "cancel combine" : "combine…"}
-            </button>
-            {combineMode && (
-              <button
-                className="op-combine-run"
-                disabled={combineIds.length < 2}
-                title="merge the selected frames into one, in selection order"
-                onClick={() => void runOp(combineOp, combineIds, {})}
-              >
-                combine {combineIds.length} selected
-              </button>
-            )}
-          </div>
-        )}
+        {/* F-029: store-scoped ops (add/revert/combine) moved INTO the frames
+            view — they edit the conversation, so they live on the
+            manipulation surface, not in global chrome. */}
         <button
           className="refresh"
-          title="re-fetch frames, compose, history and timeline from the daemon (also happens on window focus)"
+          data-tip="fetch the latest state (also refreshes when you return to this window)"
           onClick={() => void loadConversation(loaded?.conv)}
         >
           refresh
@@ -389,11 +357,10 @@ export function App() {
         </div>
       )}
 
-      {/* F-008: a single-target form opened in the frame view renders INLINE
-          under its card (slot passed to FrameView below); store-scoped forms
-          (topbar: add) and forms visible from other views keep the top host —
-          a pending form is never invisible. */}
-      {pendingOp && !inlineFormFrameId && opFormHost}
+      {/* F-008/F-029: forms render next to their trigger in the frames view
+          (under the card, or under the toolbar for store-scoped ops); from any
+          other view the top host keeps a pending form visible. */}
+      {pendingOp && !inlineFormFrameId && !toolbarFormActive && opFormHost}
 
       <main className={selected ? "with-details" : ""}>
         {!loaded ? (
@@ -419,8 +386,16 @@ export function App() {
             onToggleCombine={toggleCombine}
             opFormFrameId={inlineFormFrameId}
             opForm={opFormHost}
+            toolbarForm={toolbarFormActive ? opFormHost : null}
             showForkOnly={showForkOnly}
             onToggleForkOnly={() => setShowForkOnly((s) => !s)}
+            onAddFrame={() => pickOp(addOp, [])}
+            onRevertLast={() => pickOp(revertOp, [])}
+            onToggleCombineMode={() => {
+              setCombineMode((m) => !m);
+              setCombineIds([]);
+            }}
+            onRunCombine={() => void runOp(combineOp, combineIds, {})}
           />
         ) : (
           <HistoryView

@@ -84,6 +84,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: fork-only frames hidden by default; toggle reveals them
 - evidence: pure display filter — frame membership truth stays the engine's; nothing op-related is hidden by frame STATE (the rail concerns op availability, not card visibility, and the toggle keeps them reachable)
 - resolution: fixed: frame view filters inLastView === false cards by default (strictly false — null is not fork-only); "show fork-only frames (N)" toggle (App-level state, survives tab switches); a pending inline op form on a card that gets hidden falls back to the top host. ui:smoke extended (API-oracle: non-fork list default, toggle reveals all / no-toggle-when-none). Regression: app-render.test.tsx "F-006".
+- confirmed: Nil confirmed live ("looks good").
 
 ## F-007 — Distinct numbering for fork frames so the main thread reads continuous
 - reported: 2026-06-10 · class: design-question
@@ -197,6 +198,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: view opens scrolled to the selected frame's first bubble; no scroll-fighting afterwards
 - evidence: pure UI
 - resolution: fixed: ConversationView mount-time jump — scrollIntoView(center) on the selected frame's first bubble; mount-only, never fights user scrolling (per Nil: not overengineered). Regression: app-render.test.tsx "F-018/F-020".
+- confirmed: Nil confirmed live ("good").
 
 ## F-019 — History sub-toggle (commits|timeline) overlaps entries when scrolling
 - reported: 2026-06-10 · class: refinement
@@ -206,6 +208,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: entries never show through/around the sticky toggle row
 - evidence: sticky toggle is content-width; entries scroll past beside/above it
 - resolution: fixed: sub-toggle wrapped in a full-width sticky backdrop row (top:-16px cancels scrollport padding) — entries can no longer show beside/above it. CSS+markup; visually verified in smoke shots.
+- confirmed: Nil confirmed ("good") but follow-up spawned F-026: it should be a FIXED sub-nav below the topbar, not a sticky element that moves; whitespace above it too generous.
 
 ## F-020 — Conversation view should open scrolled to the bottom (+ discreet jump button)
 - reported: 2026-06-10 · class: refinement
@@ -215,24 +218,26 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 - expected: opens at latest activity when nothing is selected (F-018 wins when a selection exists); small jump-to-bottom control
 - evidence: pure UI
 - resolution: fixed: with no selection the conversation view opens scrolled to the bottom; discreet sticky ↓ button (bottom-right) jumps to latest. Regression: app-render.test.tsx "F-018/F-020".
+- confirmed: Nil confirmed live ("good").
 
 ## F-021 — Explanation tooltips for all buttons
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-4
+- status: fixed@5868672
 - what: "add explanation tooltips for all the buttons, it's not clear what they do. e.g., what does refresh do? not clear"
 - where: topbar + view controls + op surfaces
 - expected: title tooltips describing each control's action
 - evidence: pure UI
 - resolution: fixed: title tooltips on every topbar control (tabs, store ops, switcher, copy, refresh), the per-frame ops menu trigger, details close/fields toggle, history sub-toggle. Regression: app-render.test.tsx "F-021" (non-empty title on all topbar controls).
+- confirmed: Nil follow-ups: copy too jargony (F-028) and tooltips should appear quicker (F-031).
 
 ## F-022 — "combine…" button is cut off
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-4
+- status: fixed@batch-5
 - what: "'combine...' button is cut off"
 - where: topbar store-ops
 - expected: button renders fully at all widths
 - evidence: store-ops buttons can flex-shrink below content width
-- resolution: fixed: flex-shrink:0 on store-ops buttons + conv-key (nowrap already set in batch 2) — buttons can no longer be squashed below content. CSS-only; Nil to confirm visually.
+- resolution: resolved via F-029: the store-ops buttons moved into the frames-view toolbar with room to render at natural width; flex-shrink:0 retained. Nil to confirm visually.
 
 ## F-023 — Why is refresh right-aligned? (question)
 - reported: 2026-06-10 · class: observation
@@ -245,18 +250,74 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-024 — Favicon + capitalized tab title
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-4
+- status: fixed@5868672
 - what: "add a favicon and capitalization on the tab name"
 - where: ui/index.html (<title>context composer</title>, icon is the deliberate empty data: URI that suppresses /favicon.ico passthrough hits)
 - expected: real icon + "Context Composer"
 - evidence: must stay a data: URI (or /ui-scoped asset) so no implicit /favicon.ico request leaks into the transparent passthrough
 - resolution: fixed: <title>Context Composer</title> + real favicon as inline SVG data URI (two stacked frame cards) — stays a data: URI so no implicit request leaks past /ui into the passthrough. ui:smoke asserts both.
+- confirmed: Nil confirmed live ("looks good").
 
 ## F-025 — Conversation identity appears twice (switcher + copy span), inconsistent lengths
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-4
+- status: fixed@5868672
 - what: "now the ui is a bit awkward. the convo id appears twice in close proximity... one is long form and one is prefix only. not clear why. maybe use short in both? not sure"
 - where: topbar conv switcher + F-009 conv-key span
 - expected: identity shown once coherently; short form preferred
 - evidence: switcher options carry key.slice(0,24); the span carries key.slice(0,8)
 - resolution: fixed: switcher options now carry id + turns + active only; the conv-key span is the single key surface (8-char prefix, full key in tooltip, copy-full button). Regression: app-render.test.tsx "F-025".
+- confirmed: Nil confirmed ("looks good"); follow-up spawned F-030 (drop the duplicated dim id from the span).
+
+## F-026 — History sub-toggle should be a FIXED sub-nav below the topbar
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-5
+- what: "why does it move at all? why can't it be fixed to below the nav bar. it's essentially a sub-nav-bar. it may have too much white space above it, between it and the nav bar"
+- where: history tab
+- expected: commits|timeline row pinned below the topbar (non-scrolling), tighter spacing above
+- evidence: pure UI — batch-3 sticky backdrop (F-019) was the half-measure
+- resolution: fixed: commits|timeline row is now a true FIXED sub-nav — rendered outside the scroll area (.history-scroll owns scrolling), tighter top padding (8px). The F-019 sticky-backdrop hack is gone.
+
+## F-027 — Auto-generated topic per conversation in the selector
+- reported: 2026-06-10 · class: design-question
+- status: parked-for-Nil
+- what: "consider for later: add auto generated topic for the session selector. the implementation is a bit tricky as session topics evolve over time"
+- where: topbar conversation switcher
+- expected: TBD by Nil — "consider for later" per his words
+- evidence: sibling of F-010 (conv-level summary); both need conv-level metadata + a regen path (engine/store field + control route + CLI verb + plan gate). Topic drift over time is the hard part Nil flagged
+- resolution: parked; natural candidate to fold into the engine-batch-A enrichment machinery later (re-enrich conv topic as turns arrive), but ONLY with Nil's go and its own plan gate
+
+## F-028 — Tooltip copy is jargon — rewrite as intuitive guidance
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-5
+- what: "'(the emission)' doesn't mean anything to a user; 'what the model currently sees' is not exactly accurate for the conversation view; 'every frame as a card with its ops menu' doesn't belong in the tooltip; 'commit log', 'audit' is ambiguous. Drop the jargon. Use intuitive guidance."
+- where: all batch-4 tooltips
+- expected: plain-language, user-intent-first tooltip copy
+- evidence: pure UI copy
+- resolution: fixed: full tooltip copy pass — plain language, no emission/commit/audit/frame-card jargon (e.g. history tab: "review past changes and undo them"; ops menu: "edit this frame — delete, rewrite, offload and more"). Regression: app-render "F-021/F-028" bans jargon words across all tips.
+
+## F-029 — Store-scoped ops (add frame / revert last / combine) out of the nav bar
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-5
+- what: "'revert last' shouldn't be at the nav bar level. that's an action that should be placed very intentionally, maybe close to the thing being updated by it. Generally speaking, it feels like add frame/revert last/combine frames are operations that should only appear in the frames view, and not in the nav bar."
+- where: topbar store-ops cluster
+- expected: these ops live in the frames view (the manipulation surface), not global chrome
+- evidence: pure UI placement — same registry verbs, same routes, zero op-surface change (history view keeps its per-commit revert)
+- resolution: fixed: add/revert/combine (+ fork toggle) moved to a frames-view toolbar; zero-target forms open under that toolbar; pending forms still fall back to the top host on other views (never invisible); history keeps per-commit revert. Regressions: op-menu "F-008/F-029" placement chain + topbar-absence assertions; history-view revert test updated; ui:smoke wording updated (same flow).
+
+## F-030 — Conv-key span repeats the id shown in the selector
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-5
+- what: "remove the dim 'c1' outside the selector, it's repeated to the right of it"
+- where: topbar conv-key span
+- expected: span shows the key prefix + copy button only
+- evidence: pure UI
+- resolution: fixed: conv-key span shows the 8-char key prefix only (id lives in the switcher alone); span hidden entirely when a conversation has no key. Regression: app-render "F-009" updated.
+
+## F-031 — Tooltips should appear quicker
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-5
+- what: "can you make them show up quicker?"
+- where: all tooltips (native title attrs have an OS-controlled ~1s delay, not adjustable)
+- expected: near-instant tooltip on hover
+- evidence: requires CSS tooltips (attr-based ::after) instead of native title
+- resolution: fixed: data-tip + CSS ::after tooltips — instant on hover, right-edge-aware positioning; native title kept only on the <select>; view-toggle/sub-toggle overflow switched to visible so tips are not clipped (corner rounding moved to first/last buttons).
