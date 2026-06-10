@@ -58,6 +58,7 @@ async function cmdList(args: string[]): Promise<void> {
       tokenEstimate: number;
       deleted: boolean;
       messageCount: number;
+      overridden: boolean;
       inLastView: boolean | null;
     }>;
   };
@@ -69,6 +70,7 @@ async function cmdList(args: string[]): Promise<void> {
   for (const f of visible) {
     const flags =
       (f.deleted ? " [deleted]" : "") +
+      (f.overridden ? " [override]" : "") +
       (f.inLastView === false ? " [fork-only]" : "");
     if (f.inLastView === false) sawForkOnly = true;
     console.log(
@@ -103,6 +105,40 @@ async function cmdDelete(args: string[]): Promise<void> {
       ? `deleted: ${deleted.join(", ")} (conversation ${conv})`
       : `nothing deleted (conversation ${conv})`,
   );
+}
+
+/** §11 Phase 3a content ops. `--text` replaces the frame's emission with one
+ *  message in the frame opener's role; `edit --raw <json>` is the advanced form
+ *  (full authorship of the emitted WireMessage[] — the §5.F sweep keeps the wire
+ *  valid). The frame's SOURCE is never touched; `revert` undoes the op. */
+async function cmdContentOp(op: "edit" | "compact", args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail(`usage: ctx ${op} <frame> --text <t>${op === "edit" ? " | --raw <json>" : ""}`);
+  const textIdx = args.indexOf("--text");
+  const rawIdx = args.indexOf("--raw");
+  const body: Record<string, unknown> = { id };
+  if (textIdx >= 0 && args[textIdx + 1] !== undefined) {
+    body.text = args[textIdx + 1];
+  } else if (op === "edit" && rawIdx >= 0 && args[rawIdx + 1] !== undefined) {
+    try {
+      body.raw = JSON.parse(args[rawIdx + 1]!);
+    } catch (e) {
+      fail(`--raw must be valid JSON (a WireMessage[]): ${String(e)}`);
+    }
+  } else {
+    fail(
+      op === "edit"
+        ? "usage: ctx edit <frame> --text <t> | --raw <json>"
+        : "usage: ctx compact <frame> --text <summary>   (--regen lands in 3d)",
+    );
+  }
+  const result = (await post(`/control/${op}`, body)) as {
+    conv?: string;
+    commit?: { id: string };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(`${op === "edit" ? "edited" : "compacted"} ${id} (commit ${result.commit!.id}, conversation ${result.conv})`);
 }
 
 async function cmdCompose(args: string[]): Promise<void> {
@@ -222,6 +258,10 @@ async function main(): Promise<void> {
       return cmdShow(args);
     case "delete":
       return cmdDelete(args);
+    case "edit":
+      return cmdContentOp("edit", args);
+    case "compact":
+      return cmdContentOp("compact", args);
     case "compose":
       return cmdCompose(args);
     case "history":
@@ -234,7 +274,7 @@ async function main(): Promise<void> {
       return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }

@@ -27,7 +27,12 @@
 
 import type { Block, Frame, RequestEnvelope, RequestView } from "./types.ts";
 import { canonicalStringify, sha256, stripCacheControlDeep } from "./canonical.ts";
-import { detectWireIssues, type WireWarning } from "./wire-integrity.ts";
+import {
+  detectWireIssues,
+  sweepWire,
+  type WireRepair,
+  type WireWarning,
+} from "./wire-integrity.ts";
 
 export interface ComposeResult {
   body: Record<string, unknown>;
@@ -40,6 +45,12 @@ export interface ComposeResult {
    *  surfaced (control API / wiretap / stderr), never silently acted on (§11
    *  Phase 2.6: compose is faithful). */
   wireWarnings: WireWarning[];
+  /** Structural repairs the §5.F sweep applied to the EMITTED messages (§11
+   *  Phase 3a) — projection-time only, the store is untouched. Always surfaced
+   *  (control API / wiretap / stderr); empty when nothing needed repair (the
+   *  agent's own resends are structurally valid — repairs fire on user-op-
+   *  induced states). */
+  wireRepairs: WireRepair[];
 }
 
 function toSystemBlocks(system: unknown): Block[] {
@@ -73,9 +84,21 @@ export function compose(
         .filter((f): f is Frame => f !== undefined && !f.deleted)
     : frames.filter((f) => !f.deleted);
 
+  // Representation resolution (§5.C / §11 Phase 3a): each member emits its
+  // override when one is set (edit/compact), else its source messages. The store
+  // supplies REPRESENTATION; the view supplied MEMBERSHIP above.
+  const resolved = stripCacheControlDeep(
+    emitted.flatMap((f) => f.representation ?? f.messages),
+  );
+
+  // §5.F structural sweep (§11 Phase 3a): free editing can leave the resolved
+  // payload provider-invalid (orphaned tool pairs, role-grammar artifacts);
+  // sweep it into a valid shape — projection-time only, loudly surfaced.
+  const { messages, repairs: wireRepairs } = sweepWire(resolved);
+
   // Wire-integrity (§11 Phase 2.6): DETECT facially-suspect blocks (e.g. empty
-  // thinking husks) and surface them — never alter the wire. Compose is faithful.
-  const messages = stripCacheControlDeep(emitted.flatMap((f) => f.messages));
+  // thinking husks) on what is actually emitted and surface them — content is
+  // never altered (the sweep above is structural grammar only).
   const wireWarnings = detectWireIssues(messages);
 
   const headPresent = !!preamble && !preamble.deleted;
@@ -120,5 +143,5 @@ export function compose(
     }),
   );
 
-  return { body, headHash, hasCacheBreakpoint: placed, wireWarnings };
+  return { body, headHash, hasCacheBreakpoint: placed, wireWarnings, wireRepairs };
 }

@@ -8,8 +8,8 @@
 // in-memory, i.e. exact Phase 1 behavior — which is what the existing tests rely on.
 //
 // Two classes of mutation:
-//   • USER mutating ops (`delete`, `revert`) record an implicit COMMIT (§2.3/§5.E) and
-//     show up in `history`.
+//   • USER mutating ops (`delete`, `edit`, `compact`, `revert`) record an implicit
+//     COMMIT (§2.3/§5.E) and show up in `history`.
 //   • Session-ingest events (`ingest` of a new turn, `captureAssistant`) are the
 //     automatic `persist` of §5.D — they persist for resume but are NOT commits, so the
 //     §5/§7 operation enum stays intact and `history` shows only user operations.
@@ -44,6 +44,9 @@ export interface FrameSummary {
   tokenEstimate: number;
   deleted: boolean;
   messageCount: number;
+  /** §11 Phase 3a — a representation override (edit/compact) is in effect; the
+   *  emitted content differs from the source the agent resends. */
+  overridden: boolean;
   /** §11 Phase 2.7 — was this frame in the LAST emitted view? `false` flags a
    *  fork-only frame (stored, visible, deletable — but the next emission of the
    *  thread that didn't carry it will exclude it). `null` when not applicable:
@@ -58,6 +61,18 @@ export interface FrameSummary {
 export type RevertResult =
   | { ok: true; commit: Commit }
   | { ok: false; error: string };
+
+/** Result of a content op (`edit`/`compact`, §11 Phase 3a). */
+export type OpResult =
+  | { ok: true; commit: Commit }
+  | { ok: false; error: string };
+
+/** Input for a content op: `--text` (single message carrying the frame opener's
+ *  role) or `--raw` (full authorship of the frame's emitted messages array —
+ *  the advanced form that can express any intermediate state; the §5.F sweep
+ *  guarantees the WIRE stays valid, per "total control by capture, not
+ *  constraint"). */
+export type RepInput = { text: string } | { raw: WireMessage[] };
 
 export class FrameStore {
   private preamble: Frame | null = null;
@@ -150,6 +165,16 @@ export class FrameStore {
       nextSeq: () => ++this.seq,
     });
 
+    // Token invariant (§11 Phase 3a): `tokenEstimate` tracks the EMITTED
+    // representation. Reconcile's refresh just recomputed matched frames from
+    // their SOURCE resend — correct for un-overridden frames, wrong for frames
+    // carrying an edit/compact override (list/conversations would count the
+    // full source as live while compose emits the override). Re-assert the
+    // invariant here; matching/mapping in reconcile stays untouched.
+    for (const f of this.frames) {
+      if (f.representation) f.tokenEstimate = this.effectiveTokens(f);
+    }
+
     // Existing frames whose NORMALIZED content materially changed this ingest — i.e. grew
     // via a tool-loop / assistant continuation in the resend (Appendix C: live frames may
     // grow). Created frames aren't in `before`, so they're never counted as "grown".
@@ -198,6 +223,13 @@ export class FrameStore {
       createdIds: created.filter((f) => f.kind === "turn").map((f) => f.id),
       grownIds: grown.filter((id) => byId.has(id)),
     };
+  }
+
+  /** Token estimate of what compose EMITS for a turn frame: the override when
+   *  set, else the source (§11 Phase 3a invariant — see ingest/captureAssistant/
+   *  edit/compact/revert, every site where either may change). */
+  private effectiveTokens(f: Frame): number {
+    return estimateTokens(f.representation ?? f.messages);
   }
 
   /** Normalized content signature of a frame (cache_control stripped, deterministic
@@ -293,9 +325,13 @@ export class FrameStore {
     if (!targetId) return;
     const target = this.frames.find((f) => f.id === targetId);
     if (!target || target.deleted) return;
+    // Capture appends to SOURCE only (source material arriving). If the frame
+    // carries an edit/compact override, authorship wins: the reply is stored and
+    // visible in `show`, but compose keeps emitting the override until the user
+    // edits/clears it (§11 Phase 3a, reviewer-approved edge).
     target.messages = [...target.messages, captured.message];
     target.stopReason = captured.stopReason;
-    target.tokenEstimate = estimateTokens(target.messages);
+    target.tokenEstimate = this.effectiveTokens(target);
     target.modifiedAt = ++this.seq;
     // The assistant's reply arriving is also the context being shaped — a capture event,
     // not a commit. Keeps the timeline complete without polluting the op log.
@@ -329,6 +365,7 @@ export class FrameStore {
       tokenEstimate: f.tokenEstimate,
       deleted: f.deleted,
       messageCount: f.messages.length,
+      overridden: !!f.representation,
       inLastView,
     };
   }
@@ -365,10 +402,85 @@ export class FrameStore {
     return marked;
   }
 
-  /** Revert a `delete` commit (append-only inverse commit, git-revert style — never a
-   *  history rewrite). No arg → the HEAD commit, but ONLY if it is itself revertible.
-   *  Phase 2 deliberately refuses ambiguous reverts with a clear error rather than
-   *  silently toggling state. */
+  /** `edit` (§5.C, §11 Phase 3a): set the frame's representation override — full
+   *  user authorship over what the model sees. The SOURCE `messages` are never
+   *  touched (identity + reconcile refresh stay source-based; the Appendix C
+   *  refresh-gate holds by construction). Records an `edit` commit whose params
+   *  carry { before, after } representation values, so revert is append-only
+   *  invertible. */
+  edit(id: string, input: RepInput): OpResult {
+    return this.setRepresentation("edit", id, input);
+  }
+
+  /** `compact` (§5.C, §11 Phase 3a): replace the frame's emission with a summary.
+   *  3a is the deterministic manual tracer (`--text <summary>`); LLM-backed
+   *  `--regen` lands with the other LLM ops (3d). Identical machinery to `edit`
+   *  with its own commit type. */
+  compact(id: string, input: RepInput): OpResult {
+    return this.setRepresentation("compact", id, input);
+  }
+
+  private setRepresentation(
+    type: "edit" | "compact",
+    id: string,
+    input: RepInput,
+  ): OpResult {
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (f.kind === "preamble") {
+      // Temporary 3a limitation, NOT a semantic rule — the preamble is just a
+      // frame (§2.7) and head ops arrive with the offload slice (3b)/demo beats.
+      return { ok: false, error: `${type} on the preamble is not yet supported (deferred past 3a)` };
+    }
+    if (f.deleted) {
+      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
+    }
+
+    // Build the new representation. --text carries the frame opener's role
+    // (reviewer point 2: compact must not change role authorship as a side
+    // effect); --raw is full authorship, deep-cloned so later caller mutation
+    // can't reach the store.
+    let after: WireMessage[];
+    if ("text" in input) {
+      const role = f.role === "assistant" ? "assistant" : "user";
+      after = [{ role, content: input.text }];
+    } else {
+      if (
+        !Array.isArray(input.raw) ||
+        input.raw.length === 0 ||
+        !input.raw.every(
+          (m) =>
+            m &&
+            (m.role === "user" || m.role === "assistant") &&
+            (typeof m.content === "string" || Array.isArray(m.content)),
+        )
+      ) {
+        return {
+          ok: false,
+          error: `--raw must be a non-empty WireMessage[] (role user|assistant, content string|blocks)`,
+        };
+      }
+      after = structuredClone(input.raw);
+    }
+
+    const before = f.representation ? structuredClone(f.representation) : null;
+    const commit = this.makeCommit(type, [id], { before, after: structuredClone(after) }, `${type} ${id}`);
+    f.representation = after;
+    f.tokenEstimate = this.effectiveTokens(f);
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent(type, [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** Revert a `delete`/`edit`/`compact` commit (append-only inverse commit,
+   *  git-revert style — never a history rewrite). No arg → the HEAD commit, but
+   *  ONLY if it is itself revertible. Ambiguous reverts are refused with a clear
+   *  error rather than silently toggling state. For edit/compact the inverse
+   *  restores ONLY representation/provenance/modifiedAt — never source
+   *  `messages` (reviewer point 6). */
   revert(commitId?: string): RevertResult {
     const target = commitId ? this.commits.get(commitId) : this.commits.getHead();
     if (!target) {
@@ -377,10 +489,10 @@ export class FrameStore {
         error: commitId ? `no commit ${commitId}` : "no commits to revert",
       };
     }
-    if (target.type !== "delete") {
+    if (target.type !== "delete" && target.type !== "edit" && target.type !== "compact") {
       return {
         ok: false,
-        error: `commit ${target.id} is a ${target.type}; Phase 2 can only revert delete commits`,
+        error: `commit ${target.id} is a ${target.type}; only delete/edit/compact commits can be reverted`,
       };
     }
     if (this.commits.isReverted(target.id)) {
@@ -402,7 +514,15 @@ export class FrameStore {
     );
     for (const id of target.affectedFrameIds) {
       const f = this.show(id)!;
-      f.deleted = false; // lift the tombstone; the frame resumes absorbing the resend
+      if (target.type === "delete") {
+        f.deleted = false; // lift the tombstone; the frame resumes absorbing the resend
+      } else {
+        // edit/compact inverse: restore the prior representation value (which may
+        // be null = no override). Source `messages` are never touched.
+        const before = (target.params as { before?: WireMessage[] | null }).before ?? null;
+        f.representation = before ? structuredClone(before) : null;
+        f.tokenEstimate = this.effectiveTokens(f);
+      }
       f.modifiedAt = ++this.seq;
       f.provenance.push(commit.id);
     }
@@ -412,8 +532,8 @@ export class FrameStore {
     return { ok: true, commit };
   }
 
-  /** The user commit log (§5.E) — `delete`/`revert` only; ingest/capture never appear.
-   *  This is the version-control history (`ctx history`). */
+  /** The user commit log (§5.E) — `delete`/`edit`/`compact`/`revert`; ingest/capture
+   *  never appear. This is the version-control history (`ctx history`). */
   history(): Commit[] {
     return this.commits.history();
   }

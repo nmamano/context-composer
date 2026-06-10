@@ -54,8 +54,20 @@ export interface Frame {
 
   /** Tombstone. A deleted frame stays authoritative: reconcile matches it so the
    *  unaware agent's resend of the same content does NOT re-add it, and compose
-   *  omits it. Recoverable via `revert` (Phase 2). */
+   *  omits it. Recoverable via `revert` (Phase 2). Deleted wins over
+   *  `representation`: a tombstoned frame emits nothing regardless of override. */
   deleted: boolean;
+
+  /** Representation override (§5.C / Appendix C, structural form — §11 Phase 3a).
+   *  When set, compose emits THESE messages for the frame instead of the source
+   *  `messages`. The source stays authoritative for identity and for reconcile's
+   *  refresh (which writes ONLY source), so the unaware agent's resend can never
+   *  clobber a user's edit and `restore()`'s anchor recomputation never sees
+   *  edited bytes — the Appendix C refresh-gate holds BY CONSTRUCTION, with no
+   *  conditional in the matcher. null/undefined = no override (emit source).
+   *  `tokenEstimate` always tracks the EMITTED representation
+   *  (`representation ?? messages`). */
+  representation?: WireMessage[] | null;
 
   /** Operation lineage (Phase 2): the ordered ids of the commits that produced this
    *  frame's current REPRESENTATION (e.g. ["c1"] after a delete, ["c1","c2"] after a

@@ -16,6 +16,7 @@
 import { PROXY_PORT, STORE_PATH, WIRETAP_PATH } from "../config.ts";
 import { ConversationRegistry } from "../engine/registry.ts";
 import type { FrameStore } from "../engine/state.ts";
+import type { WireMessage } from "../engine/types.ts";
 import type { Commit } from "../engine/commit-graph.ts";
 import type { ContextEvent } from "../engine/event-log.ts";
 import { forward, passthrough } from "./forward.ts";
@@ -138,6 +139,14 @@ export function startProxy(opts: {
             .join(" "),
       );
     }
+    if (composed.wireRepairs.length > 0) {
+      // §5.F sweep repairs are never silent (§11 Phase 3a): projection-time
+      // structural fixes for user-op-induced states, surfaced per request.
+      console.error(
+        `[context-composer] wire repairs (conv ${conv.id}): ` +
+          composed.wireRepairs.map((r) => `${r.kind}(${r.detail})`).join(" "),
+      );
+    }
 
     let forwarded;
     try {
@@ -153,6 +162,7 @@ export function startProxy(opts: {
         inbound: { headers: redactHeaders(req.headers), rawBody },
         outboundBody: composed.body,
         wireWarnings: composed.wireWarnings,
+        wireRepairs: composed.wireRepairs,
         viewFrameIds: view.frameIds,
         omittedFrameIds,
         upstreamStatus: null,
@@ -169,6 +179,7 @@ export function startProxy(opts: {
       inbound: { headers: redactHeaders(req.headers), rawBody },
       outboundBody: composed.body,
       wireWarnings: composed.wireWarnings,
+      wireRepairs: composed.wireRepairs,
       // §11 Phase 2.7 live-validation surface: the frames this request's view
       // emitted vs the stored frames the request didn't carry (fork-only frames +
       // tombstones not resent) — the fork-isolation diff, visible per request.
@@ -221,6 +232,32 @@ export function startProxy(opts: {
         return json({ conv: conv.id, deleted: store.delete(ids) });
       }
 
+      // §11 Phase 3a content ops: representation overrides. `text` = single
+      // message carrying the frame opener's role; `raw` = full authorship of the
+      // emitted messages array (advanced; the §5.F sweep keeps the wire valid).
+      if ((path === "/control/edit" || path === "/control/compact") && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; text?: string; raw?: unknown }
+          | null;
+        if (!parsed?.id) return json({ error: "missing id" }, 400);
+        const op = path === "/control/edit" ? "edit" : "compact";
+        let result;
+        if (typeof parsed.text === "string") {
+          result = store[op](parsed.id, { text: parsed.text });
+        } else if (op === "edit" && parsed.raw !== undefined) {
+          // Shape is validated inside store.edit (clean 400 on a bad payload).
+          result = store.edit(parsed.id, { raw: parsed.raw as WireMessage[] });
+        } else {
+          return json(
+            { error: op === "edit" ? "provide text or raw" : "provide text (compact --regen lands in 3d)" },
+            400,
+          );
+        }
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
       if (path === "/control/compose") {
         // §11 Phase 2.7 semantics: the DEFAULT stays the full-store compose (stable
         // for tooling/scripts) with a viewNote stating fork-only frames may be
@@ -262,6 +299,7 @@ export function startProxy(opts: {
           out.hasCacheBreakpoint = c.hasCacheBreakpoint;
         }
         out.wireWarnings = c.wireWarnings; // always surfaced (§11 Phase 2.6)
+        out.wireRepairs = c.wireRepairs; // §5.F sweep repairs, never silent (§11 Phase 3a)
         return json(out);
       }
 

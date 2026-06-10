@@ -13,7 +13,7 @@
 // entering the stream, NOT a representation override — so it never becomes a commit and
 // never lands in `Frame.provenance` (that stays operation lineage; see Appendix C).
 
-export type ContextEventType = "capture" | "delete" | "revert";
+export type ContextEventType = "capture" | "delete" | "revert" | "edit" | "compact";
 
 export interface ContextEvent {
   id: string;

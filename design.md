@@ -940,6 +940,16 @@ rule lives or dies on this gate).
     **Also lands the `compose` wire-integrity sweep** ([§5.F](#5f-composition--runtime)) —
     `edit` is the first op that can mutate a frame into a provider-invalid state (orphaned
     `tool_use`/`tool_result`, dangling reply), so the sweep ships *with* it, not later.
+    **Status: built and live-validated (2026-06-10).** Representation is a separate
+    Frame field (`representation`), so the Appendix C refresh-gate and the restore
+    identity trap are impossible by construction — source `messages` stay authoritative
+    for identity/refresh, ops never touch them. `tokenEstimate` tracks the emission.
+    Sweep pairing is sequential (pending-use FIFO; retention requires a surviving later
+    result). `compact` is the manual deterministic tracer (`--text`); LLM `--regen`
+    lands with 3d. Revert extends to edit/compact (`{before, after}` params).
+    Live real-TUI: mid-session `ctx edit` flipped the model's answer VERMILION/88 →
+    "Teal and 41" → revert → "Vermilion and 88", unaware inbound carrying the original
+    throughout; the sweep's same-role merge passed the live API (wiretap-verified).
   - **3b** `offload`, `restore` — validates file-read retrieval (assumption 5); the live
     token-reclamation beat.
   - **3c** `combine`, `split`, `move`, `add` — structural reshaping.

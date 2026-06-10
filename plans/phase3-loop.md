@@ -47,7 +47,7 @@ mode — never blanket-bypass, judge via the wiretap not the pane).
 
 ## Slice status
 
-- [ ] 3a — edit + compact + §5.F wire-integrity sweep (handoff below)
+- [x] 3a — edit + compact + §5.F wire-integrity sweep — committed, reviewer-signed-off (see design.md §11 Phase 3a Status)
 - [ ] 3b — offload + restore (handoff to be authored after 3a)
 - [ ] 3c — combine + split + move + add (handoff after 3b)
 - [ ] 3d — strip + summarize + retitle (handoff after 3c)
