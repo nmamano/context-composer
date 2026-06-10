@@ -24,6 +24,7 @@ import { forward, passthrough } from "./forward.ts";
 import { redactHeaders, Wiretap } from "./wiretap.ts";
 import {
   compactPrompt,
+  envEnrichClient,
   envLlmClient,
   parseRetitleOutput,
   regenUnavailable,
@@ -31,6 +32,7 @@ import {
   summarizePrompt,
   type LlmClient,
 } from "../engine/llm.ts";
+import { EnrichmentQueue } from "./enrich.ts";
 import { renderFrameMarkdown } from "../engine/offload.ts";
 
 export interface ProxyHandle {
@@ -72,6 +74,9 @@ function publicEvent(e: ContextEvent) {
     frameIds: e.frameIds,
     commitId: e.commitId,
     timestamp: e.timestamp,
+    // Engine batch A audit detail (e.g. enriched: fields + provider label).
+    // Found by the live check: the explicit mapper silently dropped it.
+    note: e.note ?? null,
   };
 }
 
@@ -89,12 +94,24 @@ export function startProxy(opts: {
    *  (CC_LLM_API_KEY + CC_LLM_MODEL, or null = regen unavailable with a clear
    *  error). Tests inject a deterministic stub — gates never need a key. */
   llm?: LlmClient | null;
+  /** Ingest-enrichment client (engine batch A, plans/ui-feedback.md F-001).
+   *  Omit for the env default (CC_ENRICH_ON_INGEST=1 + provider required, else
+   *  null = enrichment off). Tests inject a deterministic stub — default gates
+   *  stay quota-free. */
+  enrich?: { client: LlmClient; label: string } | null;
   /** Where the built UI lives (§11 Phase 5a). Omit for ui/dist; tests pass a
    *  tmp dir (same seam pattern as storePath/framesDir). */
   uiDistDir?: string;
 } = {}): ProxyHandle {
   const registry = new ConversationRegistry(opts.storePath ?? null, opts.framesDir);
   const llm = opts.llm !== undefined ? opts.llm : envLlmClient();
+  const enrichCfg = opts.enrich !== undefined ? opts.enrich : envEnrichClient();
+  const enrichQueue = enrichCfg
+    ? new EnrichmentQueue(enrichCfg.client, enrichCfg.label)
+    : null;
+  if (enrichCfg) {
+    console.error(`[context-composer] ingest enrichment ON (${enrichCfg.label})`);
+  }
   /** Render a frame's CURRENT emission for a regen prompt; null if no frame.
    *  The LLM is called BEFORE any store op — a failed/unconfigured regen never
    *  mutates state (reviewer point C). */
@@ -234,7 +251,15 @@ export function startProxy(opts: {
 
     lastCapture = capture
       .then((c) => {
-        if (c) store.captureAssistant(c, targetId);
+        if (c) {
+          store.captureAssistant(c, targetId);
+          // Engine batch A: the turn is now complete (user + assistant) —
+          // generate its display metadata asynchronously. Fire-and-forget:
+          // never blocks this response or the next request; per-field
+          // eligibility re-checks at apply time (store.enrich) mean user ops
+          // always win. Live ingest only — no backfill on store load.
+          if (targetId) enrichQueue?.enqueue(store, conv.id, targetId);
+        }
       })
       .catch(() => {
         /* capture is best-effort; the live frame self-heals on the agent's resend */

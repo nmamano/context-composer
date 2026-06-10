@@ -544,8 +544,13 @@ export class FrameStore {
     mkdirSync(this.framesDir, { recursive: true, mode: 0o700 });
     writeFileSync(path, rendered, { mode: 0o600 });
 
+    // F-017 (plans/ui-feedback.md, plan-gated): the frame's own summary —
+    // typically the ingest-enrichment auto-summary — beats the deterministic
+    // first-line derivation. Explicit opts.summary still wins over everything.
+    // NOTE: this changes what compose emits for newly offloaded frames when
+    // f.summary exists (intended; applies to UI, control API, and CLI alike).
     const summary =
-      opts.summary ?? deriveSummary(emission) ?? `offloaded frame ${f.id}`;
+      opts.summary ?? f.summary ?? deriveSummary(emission) ?? `offloaded frame ${f.id}`;
     // User-role stub (deliberate departure from edit/compact role preservation):
     // this is OUR note to the model inviting a file read, not a reconstruction
     // of the original speaker. The §5.F sweep handles any role adjacency.
@@ -839,6 +844,48 @@ export class FrameStore {
     this.recordEvent("retitle", [id], commit.id);
     this.persist();
     return { ok: true, commit };
+  }
+
+  /** Engine batch A (plans/ui-feedback.md F-001, plan-gated): METADATA FILL
+   *  from async ingest enrichment. The server layer generates {title, summary}
+   *  and applies it here under LATEST-state checks (reviewer condition #5):
+   *  the frame must still exist, still be a turn frame, not deleted; title
+   *  fills only while it is still the makeFrame placeholder; summary only
+   *  while still null — so a manual retitle ALWAYS wins, per field. Fields
+   *  that no longer qualify are skipped; if nothing applies, NO event.
+   *  Deliberately NOT a commit (no per-turn history flooding — this mirrors
+   *  the placeholder stamped at capture); audited via an `enriched` timeline
+   *  event carrying the filled fields + provider label (condition #1 — never
+   *  raw prompt/output, only the values already visible on the frame). */
+  enrich(
+    id: string,
+    opts: { title?: string; summary?: string; source?: string },
+  ): { ok: true; applied: Array<"title" | "summary"> } | { ok: false; error: string } {
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (f.kind !== "turn") {
+      return { ok: false, error: `frame ${id} is not a turn frame` };
+    }
+    if (f.deleted) return { ok: false, error: `frame ${id} is deleted` };
+    const applied: Array<"title" | "summary"> = [];
+    if (opts.title !== undefined && f.title === `frame ${f.id}`) {
+      f.title = opts.title;
+      applied.push("title");
+    }
+    if (opts.summary !== undefined && (f.summary === undefined || f.summary === null)) {
+      f.summary = opts.summary;
+      applied.push("summary");
+    }
+    if (applied.length === 0) return { ok: true, applied };
+    f.modifiedAt = ++this.seq;
+    this.recordEvent(
+      "enriched",
+      [id],
+      null,
+      `${applied.join("+")}${opts.source ? ` via ${opts.source}` : ""}`,
+    );
+    this.persist();
+    return { ok: true, applied };
   }
 
   /** The commit that established a frame's CURRENT offload: its most recent
@@ -1251,6 +1298,7 @@ export class FrameStore {
     type: ContextEventType,
     frameIds: string[],
     commitId: string | null = null,
+    note: string | null = null,
   ): ContextEvent {
     const event: ContextEvent = {
       id: `e${++this.eventCounter}`,
@@ -1259,6 +1307,7 @@ export class FrameStore {
       commitId,
       seq: ++this.seq,
       timestamp: new Date().toISOString(),
+      ...(note !== null ? { note } : {}),
     };
     this.events.append(event);
     return event;

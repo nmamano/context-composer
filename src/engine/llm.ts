@@ -49,6 +49,9 @@ export function regenUnavailable(manualFallback: string): string {
 export function claudeCliClient(opts: {
   bin?: string;
   model?: string;
+  /** CLI thinking/effort level (low|medium|high|xhigh|max — verified against
+   *  claude CLI 2.1.170 --help). Engine batch A passes "low" for enrichment. */
+  effort?: string;
   timeoutMs?: number;
 } = {}): LlmClient {
   const bin = opts.bin ?? "claude";
@@ -68,6 +71,7 @@ export function claudeCliClient(opts: {
         "--permission-mode", "dontAsk",
       ];
       if (opts.model) argv.push("--model", opts.model);
+      if (opts.effort) argv.push("--effort", opts.effort);
       const proc = Bun.spawn(argv, {
         stdin: new TextEncoder().encode(prompt),
         stdout: "pipe",
@@ -126,17 +130,26 @@ export function envLlmClient(): LlmClient | null {
     }
     return null;
   }
+  return apiTextClient({ apiKey, model, baseUrl });
+}
+
+/** The plain text-in/text-out API-key client (shared by regen + enrichment). */
+function apiTextClient(cfg: {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+}): LlmClient {
   return {
     async complete(prompt: string, maxTokens = 512): Promise<string> {
-      const res = await fetch(`${baseUrl}/v1/messages`, {
+      const res = await fetch(`${cfg.baseUrl}/v1/messages`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-api-key": apiKey,
+          "x-api-key": cfg.apiKey,
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model,
+          model: cfg.model,
           max_tokens: maxTokens,
           temperature: 0,
           messages: [{ role: "user", content: prompt }],
@@ -156,6 +169,42 @@ export function envLlmClient(): LlmClient | null {
       return text.trim();
     },
   };
+}
+
+/** Engine batch A (plans/ui-feedback.md F-001, plan-gated) — the INGEST
+ *  ENRICHMENT client, or null when not enabled. SEPARATE explicit gate
+ *  (reviewer condition #2): CC_ENRICH_ON_INGEST=1 is required IN ADDITION to a
+ *  configured provider — provider activation alone (e.g. CC_LLM_CLAUDE_CLI=1
+ *  set for manual regen) must never silently start a completion per captured
+ *  turn. Default daemon and all default gates stay quota-free.
+ *
+ *  Model: CC_ENRICH_MODEL, default claude-sonnet-4-6 at low effort
+ *  (CC_ENRICH_EFFORT) — Nil 2026-06-10: "sonnet with low thinking effort, not
+ *  haiku"; flags verified against claude CLI 2.1.170 (--model, --effort).
+ *  Provider precedence mirrors envLlmClient (API key wins; regen's CC_LLM_*
+ *  config is untouched). The label rides the `enriched` audit event. */
+export function envEnrichClient(): { client: LlmClient; label: string } | null {
+  if (process.env.CC_ENRICH_ON_INGEST !== "1") return null;
+  const model = process.env.CC_ENRICH_MODEL ?? "claude-sonnet-4-6";
+  const apiKey = process.env.CC_LLM_API_KEY;
+  if (apiKey) {
+    const baseUrl = process.env.CC_LLM_BASE_URL ?? "https://api.anthropic.com";
+    return { client: apiTextClient({ apiKey, model, baseUrl }), label: `api:${model}` };
+  }
+  if (process.env.CC_LLM_CLAUDE_CLI === "1") {
+    const effort = process.env.CC_ENRICH_EFFORT ?? "low";
+    const timeout = Number(process.env.CC_LLM_CLI_TIMEOUT_MS);
+    return {
+      client: claudeCliClient({
+        bin: process.env.CC_CLAUDE_BIN,
+        model,
+        effort,
+        timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
+      }),
+      label: `claude-cli:${model}@${effort}`,
+    };
+  }
+  return null;
 }
 
 /** Fixed regen prompt shapes — deterministic instructions over the frame's

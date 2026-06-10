@@ -95,6 +95,15 @@ describe("claudeCliClient subprocess discipline", () => {
     expect(argv()).toContain("some-model");
   });
 
+  test("--effort is passed only when configured (engine batch A enrichment)", async () => {
+    const bin = stubBin(`echo ok`);
+    await claudeCliClient({ bin }).complete("x");
+    expect(argv()).not.toContain("--effort");
+    await claudeCliClient({ bin, model: "m", effort: "low" }).complete("x");
+    expect(argv()).toContain("--effort");
+    expect(argv()).toContain("low");
+  });
+
   test("empty output is an error", async () => {
     const bin = stubBin(`printf '   \\n'`);
     expect(claudeCliClient({ bin }).complete("x")).rejects.toThrow(/no text/);

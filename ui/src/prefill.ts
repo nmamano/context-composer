@@ -16,9 +16,11 @@ import type { FormValues } from "./components/OpMenu.tsx";
 export function opPrefill(op: OpSpec, targets: Frame[]): FormValues {
   if (op.verb === "offload" && targets.length === 1) {
     const f = targets[0]!;
-    // Mirrors state.ts offload(): summary ?? deriveSummary(emission) ?? fallback.
+    // Mirrors state.ts offload() (F-017): opts.summary ?? f.summary (the
+    // ingest-enrichment auto-summary) ?? deriveSummary(emission) ?? fallback.
     return {
-      summary: deriveSummary(currentEmission(f)) ?? `offloaded frame ${f.id}`,
+      summary:
+        f.summary ?? deriveSummary(currentEmission(f)) ?? `offloaded frame ${f.id}`,
     };
   }
   return {};

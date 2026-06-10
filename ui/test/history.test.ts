@@ -88,8 +88,8 @@ describe("commitRows", () => {
 describe("eventRows", () => {
   test("maps public events including null commitId (captures)", () => {
     const events: PublicEvent[] = [
-      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1" },
-      { id: "e2", type: "delete", frameIds: ["t1"], commitId: "c1", timestamp: "ts2" },
+      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null },
+      { id: "e2", type: "delete", frameIds: ["t1"], commitId: "c1", timestamp: "ts2", note: null },
     ];
     const rows = eventRows(events);
     expect(rows).toHaveLength(2);

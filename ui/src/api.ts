@@ -85,6 +85,8 @@ export interface PublicEvent {
   frameIds: string[];
   commitId: string | null;
   timestamp: string;
+  /** Audit detail (engine batch A: enriched events carry fields + provider). */
+  note: string | null;
 }
 
 export async function fetchHistory(conv: string): Promise<PublicCommit[]> {

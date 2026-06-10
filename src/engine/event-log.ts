@@ -16,7 +16,11 @@
 export type ContextEventType =
   | "capture" | "delete" | "revert" | "edit" | "compact" | "offload" | "restore"
   | "add" | "move" | "combine" | "split"
-  | "strip" | "summarize" | "retitle";
+  | "strip" | "summarize" | "retitle"
+  // Engine batch A (plans/ui-feedback.md F-001): async ingest enrichment filled
+  // title/summary metadata. Audited-not-silent (reviewer condition) — an event,
+  // never a commit (metadata fill mirrors the capture-time placeholder).
+  | "enriched";
 
 export interface ContextEvent {
   id: string;
@@ -29,6 +33,9 @@ export interface ContextEvent {
   seq: number;
   /** Display-only wall-clock. */
   timestamp: string;
+  /** Optional audit detail (e.g. `enriched`: which fields + provider/model —
+   *  never raw prompt/output). Additive; absent on older snapshots. */
+  note?: string | null;
 }
 
 export class EventLog {

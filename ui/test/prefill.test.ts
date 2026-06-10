@@ -42,6 +42,12 @@ test("offload prefill mirrors the engine default: first text line of the emissio
   });
 });
 
+test("F-017: the frame's own summary (ingest enrichment) beats the derived first line", () => {
+  expect(opPrefill(offload, [frame({ summary: "what this turn was about" })])).toEqual({
+    summary: "what this turn was about",
+  });
+});
+
 test("offload prefill reads the CURRENT emission — representation wins over source", () => {
   const f = frame({
     representation: [{ role: "user", content: "the override text" }],
