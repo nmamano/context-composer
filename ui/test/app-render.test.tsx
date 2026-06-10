@@ -106,6 +106,8 @@ const shows: Record<string, unknown> = {
     tokenEstimate: 30,
     messages: [],
     system: "You are a test agent",
+    injectedSystem: [{ type: "text", text: "CTX-INJECTED-NOTE" }],
+    tools: [{ name: "Bash", input_schema: { type: "object" } }],
   },
   f1: {
     ...baseFrame,
@@ -438,6 +440,29 @@ test("F-021/F-028: all controls carry tooltips, free of jargon", async () => {
       expect(tip.toLowerCase()).not.toContain(word);
     }
   }
+  // Batch-6 copy: F-033 capitalized brand, F-032 plain "combine" label,
+  // F-034 Nil's exact frames-tab copy.
+  expect(container.querySelector(".topbar h1")!.textContent).toBe("Context Composer");
+  expect(container.querySelector(".store-ops .op-combine")!.textContent).toBe("combine");
+  const framesTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+    (b) => b.textContent === "frames",
+  )!;
+  expect(framesTab.getAttribute("data-tip")).toBe("inspect and edit the context frames");
+  await unmount();
+});
+
+// F-036 (bug): a preamble's content lives in system/tools/injectedSystem —
+// the details panel must show it as readable text, not count rows only.
+test("F-036: preamble details render system prompt, injected blocks, and tool defs", async () => {
+  const { container, act, tab, unmount } = await renderApp();
+  await act(async () => click(tab("frames")));
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="p0"]')!));
+  const panel = container.querySelector(".details-panel")!;
+  const text = panel.textContent ?? "";
+  expect(text).toContain("You are a test agent"); // full system text, not a count
+  expect(text).toContain("CTX-INJECTED-NOTE");
+  expect(text).toContain("Bash"); // tool named in the collapsible summary
+  expect(text).not.toContain("(no messages)"); // misleading empty emission gone
   await unmount();
 });
 

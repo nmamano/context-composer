@@ -58,10 +58,10 @@ export function FrameView(props: {
         </button>
         <button
           className={`op-combine ${props.combineMode ? "on" : ""}`}
-          data-tip="merge several frames into one — pick the frames, then run"
+          data-tip="merge several frames into one"
           onClick={() => props.onToggleCombineMode?.()}
         >
-          {props.combineMode ? "cancel combine" : "combine…"}
+          {props.combineMode ? "cancel combine" : "combine"}
         </button>
         {props.combineMode && (
           <button

@@ -251,7 +251,7 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>context composer</h1>
+        <h1>Context Composer</h1>
         <select
           aria-label="conversation"
           title="switch conversation"
@@ -314,7 +314,7 @@ export function App() {
             role="tab"
             aria-selected={view === "frames"}
             className={view === "frames" ? "on" : ""}
-            data-tip="inspect and edit the pieces that make up the conversation"
+            data-tip="inspect and edit the context frames"
             onClick={() => switchView("frames")}
           >
             frames
@@ -334,7 +334,7 @@ export function App() {
             manipulation surface, not in global chrome. */}
         <button
           className="refresh"
-          data-tip="fetch the latest state (also refreshes when you return to this window)"
+          data-tip="load what's new — use it if the conversation advanced while you kept this window open; switching back to the window refreshes on its own"
           onClick={() => void loadConversation(loaded?.conv)}
         >
           refresh

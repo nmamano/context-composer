@@ -232,12 +232,13 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-022 — "combine…" button is cut off
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "'combine...' button is cut off"
 - where: topbar store-ops
 - expected: button renders fully at all widths
 - evidence: store-ops buttons can flex-shrink below content width
 - resolution: resolved via F-029: the store-ops buttons moved into the frames-view toolbar with room to render at natural width; flex-shrink:0 retained. Nil to confirm visually.
+- confirmed: Nil confirmed ("good"); 4.1 clarified the original report — the "…" was the literal label, not clipping. Label change is F-032.
 
 ## F-023 — Why is refresh right-aligned? (question)
 - reported: 2026-06-10 · class: observation
@@ -270,12 +271,13 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-026 — History sub-toggle should be a FIXED sub-nav below the topbar
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "why does it move at all? why can't it be fixed to below the nav bar. it's essentially a sub-nav-bar. it may have too much white space above it, between it and the nav bar"
 - where: history tab
 - expected: commits|timeline row pinned below the topbar (non-scrolling), tighter spacing above
 - evidence: pure UI — batch-3 sticky backdrop (F-019) was the half-measure
 - resolution: fixed: commits|timeline row is now a true FIXED sub-nav — rendered outside the scroll area (.history-scroll owns scrolling), tighter top padding (8px). The F-019 sticky-backdrop hack is gone.
+- confirmed: Nil confirmed live ("good").
 
 ## F-027 — Auto-generated topic per conversation in the selector
 - reported: 2026-06-10 · class: design-question
@@ -288,7 +290,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-028 — Tooltip copy is jargon — rewrite as intuitive guidance
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "'(the emission)' doesn't mean anything to a user; 'what the model currently sees' is not exactly accurate for the conversation view; 'every frame as a card with its ops menu' doesn't belong in the tooltip; 'commit log', 'audit' is ambiguous. Drop the jargon. Use intuitive guidance."
 - where: all batch-4 tooltips
 - expected: plain-language, user-intent-first tooltip copy
@@ -297,7 +299,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-029 — Store-scoped ops (add frame / revert last / combine) out of the nav bar
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "'revert last' shouldn't be at the nav bar level. that's an action that should be placed very intentionally, maybe close to the thing being updated by it. Generally speaking, it feels like add frame/revert last/combine frames are operations that should only appear in the frames view, and not in the nav bar."
 - where: topbar store-ops cluster
 - expected: these ops live in the frames view (the manipulation surface), not global chrome
@@ -306,18 +308,74 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-030 — Conv-key span repeats the id shown in the selector
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "remove the dim 'c1' outside the selector, it's repeated to the right of it"
 - where: topbar conv-key span
 - expected: span shows the key prefix + copy button only
 - evidence: pure UI
 - resolution: fixed: conv-key span shows the 8-char key prefix only (id lives in the switcher alone); span hidden entirely when a conversation has no key. Regression: app-render "F-009" updated.
+- confirmed: Nil confirmed live ("good").
 
 ## F-031 — Tooltips should appear quicker
 - reported: 2026-06-10 · class: refinement
-- status: fixed@batch-5
+- status: fixed@967fe4c
 - what: "can you make them show up quicker?"
 - where: all tooltips (native title attrs have an OS-controlled ~1s delay, not adjustable)
 - expected: near-instant tooltip on hover
 - evidence: requires CSS tooltips (attr-based ::after) instead of native title
 - resolution: fixed: data-tip + CSS ::after tooltips — instant on hover, right-edge-aware positioning; native title kept only on the <select>; view-toggle/sub-toggle overflow switched to visible so tips are not clipped (corner rounding moved to first/last buttons).
+- confirmed: Nil confirmed live ("good").
+
+## F-032 — "combine…" label should just say "combine"
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-6
+- what: "oh i finally understood. 'combine...' is the actual text, not a trim. just make the text 'combine'."
+- where: frames toolbar
+- expected: label "combine" (cancel state unchanged)
+- evidence: pure UI copy
+- resolution: fixed: label is "combine" (cancel state unchanged).
+
+## F-033 — Capitalize "Context Composer" in the nav bar
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-6
+- what: "Capitalize Context Composer in the nav bar"
+- where: topbar h1
+- expected: "Context Composer" (matches the tab title from F-024)
+- evidence: pure UI copy
+- resolution: fixed: topbar h1 reads "Context Composer" (matches the F-024 tab title). Regression: app-render copy test.
+
+## F-034 — Frames-tab tooltip: Nil's exact copy
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-6
+- what: "copy for 'frames': inspect and edit the context frames"
+- where: frames tab tooltip
+- expected: verbatim Nil copy
+- evidence: pure UI copy
+- resolution: fixed: frames tab tooltip is Nil's verbatim copy ("inspect and edit the context frames"). Regression: app-render copy test.
+
+## F-035 — Refresh tooltip: say WHEN to click it, clearer on-focus phrasing
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-6
+- what: "'(also refreshes when you return to this window)' could be said in a more clear way. more importantly: when is the user supposed to click this button? not clear."
+- where: refresh tooltip
+- expected: copy that names the actual use case — the conversation advanced (AI replied in the terminal) while this window stayed focused; everything else refreshes automatically (focus + after every op)
+- evidence: pure UI copy
+- resolution: fixed: refresh tooltip names the actual use case — "load what's new — use it if the conversation advanced while you kept this window open; switching back to the window refreshes on its own".
+
+## F-036 — Preamble content is not viewable in the details panel
+- reported: 2026-06-10 · class: bug
+- status: fixed@batch-6
+- what: "Question: why is preamble content not shown?"
+- where: details panel for p0
+- expected: §8 — the details panel shows full text; preamble's content lives in system/tools/injectedSystem (not messages), which today surface only as advanced-tier COUNT rows ("2 definition(s)"), and the emission section shows "(no messages)" — so the actual content is unreachable in the UI (the CLI shows it)
+- evidence: DetailsPanel renders currentEmission (empty for preamble) + count-only field rows; data is already in show()
+- resolution: fixed: DetailsPanel renders a preamble-content section — full system prompt text, injected system blocks (labeled "added by the agent"), tool definitions as names + collapsible JSON; the misleading empty "(no messages)" emission section is skipped for preambles. Regression: app-render "F-036" (fixture p0 extended with tools + injectedSystem).
+
+## F-037 — Combine tooltip: drop "pick the frames, then run"
+- reported: 2026-06-10 · class: refinement
+- status: fixed@batch-6
+- what: "'then run'? not clear. 'merge several frames into one' is enough"
+- where: combine button tooltip
+- expected: verbatim Nil copy
+- evidence: pure UI copy
+- resolution: fixed: combine tooltip is exactly "merge several frames into one".
