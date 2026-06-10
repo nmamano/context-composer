@@ -58,6 +58,30 @@ export interface Frame {
    *  `representation`: a tombstoned frame emits nothing regardless of override. */
   deleted: boolean;
 
+  /** §11 Phase 3c — where this frame came from. "captured" frames have REAL
+   *  source identity (anchorFp from the agent's bytes; recomputed on snapshot
+   *  restore). All other origins are MANUFACTURED (user op products): their
+   *  anchors are unmatchable sentinels and snapshot restore must NEVER recompute
+   *  them from messages — a manufactured frame acquiring a real anchor could
+   *  match a future resend (the 3a restore-identity trap, inverted). */
+  origin: "captured" | "added" | "combined" | "split";
+
+  /** §11 Phase 3c — emission-order override (add/move). `after: null` = at the
+   *  start; `after: <frameId>` = right after that frame's emission slot; absent
+   *  = natural order. Anchor-absence fallback is deterministic (see compose). */
+  placement?: { after: string | null } | null;
+
+  /** §11 Phase 3c — set on a combine PART: this frame's emission is delegated to
+   *  the absorbing combined frame (emitted once, at the first part's slot). The
+   *  part remains the reconcile match target; its source may keep refreshing,
+   *  but compose ignores its content while absorbed. Structural ops/edits on
+   *  absorbed parts refuse ("revert the combine first"). */
+  absorbedInto?: string | null;
+
+  /** §11 Phase 3c — set on a split ORIGINAL: emission is delegated to the child
+   *  frames, in order, at the original's slot. Same rules as absorbedInto. */
+  splitInto?: string[] | null;
+
   /** §11 Phase 3b — the frame's emission is currently the offload stub; the full
    *  rendered content lives at `fileReference`. Explicit (not derived from
    *  provenance) because restore/revert/list behavior reads cleaner. Offloaded
@@ -91,8 +115,10 @@ export interface Frame {
   /** The id of the `capture` event that first created this frame (Appendix C). Gives the
    *  frame a chronological origin in the timeline WITHOUT being a representation override
    *  — capture is source material arriving, not an operation, so it stays out of
-   *  `provenance` and out of the refresh-gate. Null only in the transient window before
-   *  its creating event is recorded. */
+   *  `provenance` and out of the refresh-gate. Null in the transient window before
+   *  its creating event is recorded — and PERMANENTLY null for manufactured frames
+   *  (origin added/combined/split): those are created by COMMITS, whose ids live in
+   *  `provenance`; their timeline origin is the mirrored op event. */
   createdEventId: string | null;
 
   // Internal sequence numbers (NOT serialized into the request — kept off the wire

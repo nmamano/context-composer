@@ -49,7 +49,7 @@ mode — never blanket-bypass, judge via the wiretap not the pane).
 
 - [x] 3a — edit + compact + §5.F wire-integrity sweep — committed, reviewer-signed-off (see design.md §11 Phase 3a Status)
 - [x] 3b — offload + restore — committed, reviewer-signed-off (see design.md §11 Phase 3b Status)
-- [ ] 3c — combine + split + move + add (handoff after 3b)
+- [x] 3c — combine + split + move + add — committed, reviewer-signed-off (see design.md §11 Phase 3c Status)
 - [ ] 3d — strip + summarize + retitle (handoff after 3c)
 
 ---
@@ -220,3 +220,78 @@ planning.
 engine/wire-integrity.ts, RepInput pattern, content-ops tests as the template.
 New: engine/offload file-rendering helper (or inline in state), config for the
 frames dir (CC_FRAMES_DIR, default ./.ctx-frames). CLI: offload/restore verbs.
+
+---
+
+## PHASE 3c PICKUP (combine + split + move + add — structural reshaping)
+
+Baseline at authoring time: master @ e80089b (3a + 3b committed).
+
+### Why this slice is different
+
+The first ops that change the SET/ORDER of frames, not a member's content.
+Two structural extensions, both anticipated by the locked design:
+
+1. MEMBERSHIP BEYOND THE REQUEST (add, move): the 2.7 guardrail reserved this —
+   "user-COMMIT-originated frames emit per the user's op even when unmatched."
+   An added frame has NO agent source: it never appears in any resend, so it is
+   never in a request's view — compose must still emit it at its place.
+2. MANY-TO-MANY SOURCE IDENTITY (combine, split): Appendix C prescribes the
+   many-to-many source map (fp → ordered list of (frame, sub-range)).
+
+### Proposed architecture (CONVERGE WITH REVIEWER BEFORE CODE)
+
+KEEP RECONCILE MATCHING 1:1 AND UNTOUCHED. Structure lives in resolution
+layers, preserving every locked invariant:
+
+- PLACEMENT (add/move): Frame gains `placement?: { after: string | null }`
+  (null = start; absent = natural order). Compose builds the emission order:
+  view (or full-store) baseline order, minus placement-overridden members,
+  with placed frames spliced after their anchor frame (chains allowed, cycle
+  guard falls back to store order + warning). Added frames: `origin: "added"`
+  (vs "captured"), unmatchable sentinel anchor, anchor recompute SKIPPED on
+  snapshot restore (manufactured anchors must never match a future resend),
+  content via { text } | { raw } like edit. revert(add) = tombstone the added
+  frame (append-only un-create). revert(move) = restore prior placement.
+- ABSORPTION (combine/split): parts/original stay in store as 1:1 match
+  targets; combine creates a new frame (messages = concatenation, in order)
+  and marks each part `absorbedInto: <combinedId>`; split creates child
+  frames (sub-ranges) and marks the original `splitInto: [childIds]`.
+  Compose resolves each emission member through the absorption table:
+  absorbed part → emit the absorbing frame ONCE at the first part's slot
+  (Appendix C); split original → emit the children in order. Children /
+  combined frames are ordinary frames (edit/compact/offload/delete all work).
+  Reconcile still matches the PARTS/ORIGINAL (their source identity is
+  unchanged) and their SOURCES may keep refreshing from resends (RC4 option a:
+  matching AND refresh untouched); compose simply ignores their content while
+  the structural state is active. Combined frames / split children refuse
+  combine/split/move (nested absorption and move-over-absorption are separate
+  models); they stay ordinary for edit/compact/offload/delete.
+- Tombstones: deleted wins at every layer (deleted combined frame emits
+  nothing even though parts are matched; deleted child emits nothing).
+- Sweep (§5.F) covers any structural fallout — already load-bearing.
+
+### Acceptance (design.md §11 3c: "compose --dump shows the new frame set/order")
+
+- combine: N frames → one; emitted once at first slot; resend of parts does
+  not duplicate or un-combine; revert(combine) restores parts.
+- split: one frame → N at the original slot; each child independently
+  editable/deletable; resend of the original matches; revert(split) restores.
+- move: emitted order changes, view membership unchanged; head-hash stable;
+  revert(move) restores order.
+- add: emitted at the requested place on the NEXT request (and in full-store
+  compose) despite never being matched; survives restart (anchor never
+  manufactured); revert(add) tombstones it.
+- All ops are commits with restorable params; timeline/history complete.
+- Restart: placements/absorptions survive (SNAPSHOT_VERSION 4→5).
+- Live TUI smoke: add an instruction frame mid-session and see the model obey
+  it next turn; combine two old frames and verify the wire emits the merged
+  frame once; move a frame and verify order on the wire.
+
+### Locked / scope guard
+
+- reconcile.ts matching stays byte-identical; resolution layers only.
+- No --summarize on combine (LLM, 3d); no branch import (Phase 4).
+- Same guards pattern: preamble refuses structural ops (deferred phrasing);
+  offloaded frames refuse combine/split/move (restore first — coherence);
+  deleted frames refuse all ops except revert.

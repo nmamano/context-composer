@@ -51,6 +51,121 @@ export interface ComposeResult {
    *  agent's own resends are structurally valid — repairs fire on user-op-
    *  induced states). */
   wireRepairs: WireRepair[];
+  /** §11 Phase 3c — placement/structure anomalies (e.g. a placement cycle whose
+   *  frames were appended in store order). Deliberately separate from
+   *  wireWarnings, which is reserved for provider-wire issues. */
+  structureWarnings: StructureWarning[];
+  /** §11 Phase 3c — the frame ids actually emitted, in emission order (post
+   *  placement; post resolution once absorption lands). Separate evidence from
+   *  the view: viewFrameIds stays the honest pre-resolution MATCH mapping. */
+  emittedFrameIds: string[];
+}
+
+export interface StructureWarning {
+  kind: "placement-cycle" | "resolution-depth";
+  detail: string;
+}
+
+/**
+ * Build the EMISSION ORDER (§11 Phase 3c). Baseline membership+order comes from
+ * the request view (owned path) or the store (control default); `placement`
+ * overrides re-splice members, and ADDED frames (origin "added") are members of
+ * EVERY emission — membership by user op, the one deliberate extension beyond
+ * what the request carried (the 2.7 guardrail reserved exactly this).
+ *
+ * Deterministic anchor-absence rules (reviewer RC3):
+ *  - a MOVED member whose `after` anchor is not emitting keeps its natural
+ *    baseline position (membership is never created by `move`);
+ *  - an ADDED frame whose anchor is not emitting is placed after the nearest
+ *    PRECEDING store-order frame that is emitting, or at the start if none.
+ * Siblings placed after the same anchor emit in store order; chains resolve
+ * recursively; a placement cycle appends its frames at the end in store order
+ * and surfaces a structure warning — never silent.
+ */
+function buildEmissionOrder(
+  members: Frame[],
+  allFrames: Frame[],
+): { ordered: Frame[]; warnings: StructureWarning[] } {
+  const storeIndex = new Map(allFrames.map((f, i) => [f.id, i]));
+  const byStoreOrder = (a: Frame, b: Frame) =>
+    (storeIndex.get(a.id) ?? 0) - (storeIndex.get(b.id) ?? 0);
+
+  // Partition: base (natural order) vs placed (re-spliced). Added frames are
+  // always placed members regardless of path (the view never contains them;
+  // the full-store baseline does — excluded here, injected as placed).
+  let base: Frame[] = [];
+  const placed: Frame[] = [];
+  for (const m of members) {
+    if (m.origin === "added") continue;
+    if (m.placement) placed.push(m);
+    else base.push(m);
+  }
+  for (const a of allFrames) {
+    if (a.origin === "added" && !a.deleted) placed.push(a);
+  }
+  placed.sort(byStoreOrder);
+
+  const emitting = new Set([...base.map((f) => f.id), ...placed.map((f) => f.id)]);
+
+  // Resolve each placed frame's effective anchor.
+  const startBucket: Frame[] = [];
+  const afterBucket = new Map<string, Frame[]>();
+  const memberFallback = new Set<string>();
+  for (const p of placed) {
+    let after = p.placement?.after ?? null;
+    if (after !== null && (!emitting.has(after) || after === p.id)) {
+      if (p.origin !== "added") {
+        memberFallback.add(p.id); // moved member, absent anchor → natural order
+        continue;
+      }
+      // Added frame, absent anchor → nearest preceding emitting store-order frame.
+      let idx = (storeIndex.get(after) ?? 0) - 1;
+      let found: string | null = null;
+      while (idx >= 0) {
+        const cand = allFrames[idx]!;
+        if (emitting.has(cand.id) && cand.id !== p.id) {
+          found = cand.id;
+          break;
+        }
+        idx--;
+      }
+      after = found;
+    }
+    if (after === null) startBucket.push(p);
+    else {
+      const arr = afterBucket.get(after) ?? [];
+      arr.push(p);
+      afterBucket.set(after, arr);
+    }
+  }
+  if (memberFallback.size > 0) {
+    // Rebuild base in member order with the fallback members back in place.
+    base = members.filter(
+      (m) => m.origin !== "added" && (!m.placement || memberFallback.has(m.id)),
+    );
+  }
+
+  const ordered: Frame[] = [];
+  const emittedIds = new Set<string>();
+  const emitWithDependents = (f: Frame) => {
+    if (emittedIds.has(f.id)) return;
+    emittedIds.add(f.id);
+    ordered.push(f);
+    for (const dep of afterBucket.get(f.id) ?? []) emitWithDependents(dep);
+  };
+  for (const f of startBucket) emitWithDependents(f);
+  for (const f of base) emitWithDependents(f);
+
+  const warnings: StructureWarning[] = [];
+  const leftovers = placed.filter((f) => !emittedIds.has(f.id)).sort(byStoreOrder);
+  if (leftovers.length > 0) {
+    warnings.push({
+      kind: "placement-cycle",
+      detail: `placement cycle: ${leftovers.map((f) => f.id).join(", ")} appended in store order`,
+    });
+    for (const f of leftovers) emitWithDependents(f);
+  }
+  return { ordered, warnings };
 }
 
 function toSystemBlocks(system: unknown): Block[] {
@@ -76,13 +191,52 @@ export function compose(
   // future user-commit-originated frames (add/insert/reorder) extend membership
   // beyond what the request carried.
   const byId = new Map(frames.map((f) => [f.id, f]));
-  const emitted = view
+  const visibleMembers = view
     ? view.frameIds
         .map((id) => byId.get(id))
         // Defensive: view ids always resolve today (frames are tombstoned, never
         // removed) — the filter simply makes a future removal op fail safe.
         .filter((f): f is Frame => f !== undefined && !f.deleted)
     : frames.filter((f) => !f.deleted);
+
+  // Emission order (§11 Phase 3c): baseline membership+order from the view (or
+  // store), placement overrides re-spliced, added frames injected (membership
+  // by user op). Deterministic; anomalies surface as structureWarnings.
+  const { ordered, warnings } = buildEmissionOrder(visibleMembers, frames);
+  const structureWarnings = [...warnings];
+
+  // Structural resolution (§11 Phase 3c, Appendix C's many-to-many emission as
+  // indirection): an absorbed part resolves to its combined frame (emitted ONCE,
+  // at the first part's slot); a split original resolves to its children, in
+  // order. Combined frames / children are ordinary frames and may themselves be
+  // absorbed/split — recursion with a depth guard (ops prevent cycles; the
+  // guard surfaces rather than hangs if state is ever corrupted). Deleted wins
+  // at every layer: a deleted absorber/child emits nothing.
+  const emitted: Frame[] = [];
+  const seen = new Set<string>();
+  const resolve = (f: Frame | undefined, depth: number) => {
+    if (!f || f.deleted || seen.has(f.id)) return;
+    if (depth > 16) {
+      structureWarnings.push({
+        kind: "resolution-depth",
+        detail: `resolution depth exceeded at ${f.id} — emitting nothing for this chain`,
+      });
+      return;
+    }
+    if (f.absorbedInto) {
+      resolve(byId.get(f.absorbedInto), depth + 1);
+      return;
+    }
+    if (f.splitInto && f.splitInto.length > 0) {
+      seen.add(f.id);
+      for (const cid of f.splitInto) resolve(byId.get(cid), depth + 1);
+      return;
+    }
+    seen.add(f.id);
+    emitted.push(f);
+  };
+  for (const m of ordered) resolve(m, 0);
+  const emittedFrameIds = emitted.map((f) => f.id);
 
   // Representation resolution (§5.C / §11 Phase 3a): each member emits its
   // override when one is set (edit/compact), else its source messages. The store
@@ -143,5 +297,13 @@ export function compose(
     }),
   );
 
-  return { body, headHash, hasCacheBreakpoint: placed, wireWarnings, wireRepairs };
+  return {
+    body,
+    headHash,
+    hasCacheBreakpoint: placed,
+    wireWarnings,
+    wireRepairs,
+    structureWarnings,
+    emittedFrameIds,
+  };
 }

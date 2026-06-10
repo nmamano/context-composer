@@ -149,6 +149,13 @@ export function startProxy(opts: {
           composed.wireRepairs.map((r) => `${r.kind}(${r.detail})`).join(" "),
       );
     }
+    if (composed.structureWarnings.length > 0) {
+      // §11 Phase 3c placement/structure anomalies — surfaced, never silent.
+      console.error(
+        `[context-composer] structure warnings (conv ${conv.id}): ` +
+          composed.structureWarnings.map((w) => `${w.kind}(${w.detail})`).join(" "),
+      );
+    }
 
     let forwarded;
     try {
@@ -165,7 +172,9 @@ export function startProxy(opts: {
         outboundBody: composed.body,
         wireWarnings: composed.wireWarnings,
         wireRepairs: composed.wireRepairs,
+        structureWarnings: composed.structureWarnings,
         viewFrameIds: view.frameIds,
+        emittedFrameIds: composed.emittedFrameIds,
         omittedFrameIds,
         upstreamStatus: null,
         upstreamError: String(err),
@@ -182,10 +191,15 @@ export function startProxy(opts: {
       outboundBody: composed.body,
       wireWarnings: composed.wireWarnings,
       wireRepairs: composed.wireRepairs,
+      structureWarnings: composed.structureWarnings,
       // §11 Phase 2.7 live-validation surface: the frames this request's view
       // emitted vs the stored frames the request didn't carry (fork-only frames +
       // tombstones not resent) — the fork-isolation diff, visible per request.
+      // §11 Phase 3c adds emittedFrameIds: the post-resolution emission order
+      // (placement applied, absorption resolved) — separate evidence; the view
+      // stays the honest pre-resolution match mapping.
       viewFrameIds: view.frameIds,
+      emittedFrameIds: composed.emittedFrameIds,
       omittedFrameIds,
       upstreamStatus,
       upstreamErrorBody,
@@ -284,6 +298,63 @@ export function startProxy(opts: {
           : json({ error: result.error }, 400);
       }
 
+      // §11 Phase 3c structural ops. add: body {text|raw, after?} where after is
+      // a frame id, null (start), or absent (end). move: {id, after} (after
+      // required: id or null). combine: {ids}. split: {id, at}.
+      if (path === "/control/add" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { text?: string; raw?: unknown; after?: string | null }
+          | null;
+        if (!parsed) return json({ error: "invalid body" }, 400);
+        const input =
+          typeof parsed.text === "string"
+            ? { text: parsed.text }
+            : parsed.raw !== undefined
+              ? { raw: parsed.raw as WireMessage[] }
+              : null;
+        if (!input) return json({ error: "provide text or raw" }, 400);
+        const opts = "after" in parsed ? { after: parsed.after ?? null } : {};
+        const result = store.add(input, opts);
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/move" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; after?: string | null }
+          | null;
+        if (!parsed?.id || parsed.after === undefined) {
+          return json({ error: "move needs id and after (frame id or null for start)" }, 400);
+        }
+        const result = store.move(parsed.id, { after: parsed.after });
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/combine" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as { ids?: string[] } | null;
+        if (!Array.isArray(parsed?.ids)) return json({ error: "missing ids" }, 400);
+        const result = store.combine(parsed.ids);
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      if (path === "/control/split" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { id?: string; at?: number[] }
+          | null;
+        if (!parsed?.id || !Array.isArray(parsed.at)) {
+          return json({ error: "split needs id and at (message-boundary indices)" }, 400);
+        }
+        const result = store.split(parsed.id, parsed.at);
+        return result.ok
+          ? json({ conv: conv.id, commit: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
       if (path === "/control/compose") {
         // §11 Phase 2.7 semantics: the DEFAULT stays the full-store compose (stable
         // for tooling/scripts) with a viewNote stating fork-only frames may be
@@ -326,6 +397,8 @@ export function startProxy(opts: {
         }
         out.wireWarnings = c.wireWarnings; // always surfaced (§11 Phase 2.6)
         out.wireRepairs = c.wireRepairs; // §5.F sweep repairs, never silent (§11 Phase 3a)
+        out.structureWarnings = c.structureWarnings; // §11 Phase 3c, ditto
+        out.emittedFrameIds = c.emittedFrameIds;
         return json(out);
       }
 

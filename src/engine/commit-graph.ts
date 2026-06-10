@@ -13,7 +13,9 @@
 // conceptually muddy.
 
 // §11 Phase 3a adds the first content ops (representation overrides).
-export type CommitType = "delete" | "revert" | "edit" | "compact" | "offload" | "restore";
+export type CommitType =
+  | "delete" | "revert" | "edit" | "compact" | "offload" | "restore"
+  | "add" | "move" | "combine" | "split";
 
 /** A commit = a mutating operation, per §7 Operation. `branchId` is constant "main" in
  *  Phase 2; `parentCommitId` chains the linear history; `seq` is the shared logical

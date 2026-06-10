@@ -60,11 +60,19 @@ async function cmdList(args: string[]): Promise<void> {
       messageCount: number;
       overridden: boolean;
       offloaded: boolean;
+      origin: string;
+      absorbedInto: string | null;
+      splitInto: string[] | null;
       inLastView: boolean | null;
     }>;
   };
-  const visible = frames.filter((f) => showAll || !f.deleted);
-  const hiddenDeleted = frames.length - visible.length;
+  // §11 Phase 3c: absorbed parts / split originals are structurally hidden by
+  // default (their absorber/children emit instead); --all reveals them flagged.
+  const visible = frames.filter(
+    (f) => showAll || (!f.deleted && !f.absorbedInto && !f.splitInto),
+  );
+  const hiddenDeleted = frames.filter((f) => f.deleted && !showAll).length;
+  const hiddenStructural = frames.length - visible.length - hiddenDeleted;
 
   console.log(`(conversation ${conv} — see \`ctx conversations\`; target another with --conv <id>)`);
   let sawForkOnly = false;
@@ -72,6 +80,9 @@ async function cmdList(args: string[]): Promise<void> {
     const flags =
       (f.deleted ? " [deleted]" : "") +
       (f.offloaded ? " [offloaded]" : f.overridden ? " [override]" : "") +
+      (f.origin !== "captured" && f.kind === "turn" ? ` [${f.origin}]` : "") +
+      (f.absorbedInto ? ` [absorbed->${f.absorbedInto}]` : "") +
+      (f.splitInto ? ` [split->${f.splitInto.join(",")}]` : "") +
       (f.inLastView === false ? " [fork-only]" : "");
     if (f.inLastView === false) sawForkOnly = true;
     console.log(
@@ -80,6 +91,9 @@ async function cmdList(args: string[]): Promise<void> {
   }
   if (hiddenDeleted > 0 && !showAll) {
     console.log(`(${hiddenDeleted} deleted frame(s) hidden — use --all)`);
+  }
+  if (hiddenStructural > 0 && !showAll) {
+    console.log(`(${hiddenStructural} absorbed/split frame(s) hidden — use --all)`);
   }
   if (sawForkOnly) {
     console.log(
@@ -173,6 +187,82 @@ async function cmdRestore(args: string[]): Promise<void> {
   };
   if (result.error) fail(result.error);
   console.log(`restored ${id} inline (commit ${result.commit!.id}, conversation ${result.conv})`);
+}
+
+/** §11 Phase 3c structural ops. */
+async function cmdAdd(args: string[]): Promise<void> {
+  const body: Record<string, unknown> = {};
+  const textIdx = args.indexOf("--text");
+  const rawIdx = args.indexOf("--raw");
+  if (textIdx >= 0 && args[textIdx + 1] !== undefined) body.text = args[textIdx + 1];
+  else if (rawIdx >= 0 && args[rawIdx + 1] !== undefined) {
+    try {
+      body.raw = JSON.parse(args[rawIdx + 1]!);
+    } catch (e) {
+      fail(`--raw must be valid JSON (a WireMessage[]): ${String(e)}`);
+    }
+  } else fail("usage: ctx add --text <t> | --raw <json> [--after <id> | --start]");
+  const afterIdx = args.indexOf("--after");
+  if (afterIdx >= 0 && args[afterIdx + 1] !== undefined) body.after = args[afterIdx + 1];
+  else if (args.includes("--start")) body.after = null;
+  const result = (await post("/control/add", body)) as {
+    conv?: string;
+    commit?: { id: string; affectedFrameIds: string[] };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `added ${result.commit!.affectedFrameIds[0]} (commit ${result.commit!.id}, conversation ${result.conv})`,
+  );
+}
+
+async function cmdMove(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  if (!id) fail("usage: ctx move <frame> --after <id> | --start");
+  const afterIdx = args.indexOf("--after");
+  let after: string | null;
+  if (afterIdx >= 0 && args[afterIdx + 1] !== undefined) after = args[afterIdx + 1]!;
+  else if (args.includes("--start")) after = null;
+  else { fail("usage: ctx move <frame> --after <id> | --start"); return; }
+  const result = (await post("/control/move", { id, after })) as {
+    conv?: string;
+    commit?: { id: string };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(`moved ${id} (commit ${result.commit!.id}, conversation ${result.conv})`);
+}
+
+async function cmdCombine(args: string[]): Promise<void> {
+  const ids = args.filter((a) => !a.startsWith("-"));
+  if (ids.length < 2) fail("usage: ctx combine <id> <id> [...]");
+  const result = (await post("/control/combine", { ids })) as {
+    conv?: string;
+    commit?: { id: string; params: { combinedId?: string } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `combined ${ids.join("+")} -> ${result.commit!.params.combinedId} (commit ${result.commit!.id}, conversation ${result.conv})`,
+  );
+}
+
+async function cmdSplit(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("-"));
+  const atIdx = args.indexOf("--at");
+  if (!id || atIdx < 0 || args[atIdx + 1] === undefined) {
+    fail("usage: ctx split <frame> --at <i[,i...]>  (message-boundary indices)");
+  }
+  const at = args[atIdx + 1]!.split(",").map((x) => Number(x.trim()));
+  const result = (await post("/control/split", { id, at })) as {
+    conv?: string;
+    commit?: { id: string; params: { childIds?: string[] } };
+    error?: string;
+  };
+  if (result.error) fail(result.error);
+  console.log(
+    `split ${id} -> ${result.commit!.params.childIds!.join("+")} (commit ${result.commit!.id}, conversation ${result.conv})`,
+  );
 }
 
 async function cmdCompose(args: string[]): Promise<void> {
@@ -300,6 +390,14 @@ async function main(): Promise<void> {
       return cmdOffload(args);
     case "restore":
       return cmdRestore(args);
+    case "add":
+      return cmdAdd(args);
+    case "move":
+      return cmdMove(args);
+    case "combine":
+      return cmdCombine(args);
+    case "split":
+      return cmdSplit(args);
     case "compose":
       return cmdCompose(args);
     case "history":
@@ -312,7 +410,7 @@ async function main(): Promise<void> {
       return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }

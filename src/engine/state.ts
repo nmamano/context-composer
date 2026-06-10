@@ -54,6 +54,11 @@ export interface FrameSummary {
   /** §11 Phase 3b — emission is the offload stub; full content at fileReference. */
   offloaded: boolean;
   fileReference: string | null;
+  /** §11 Phase 3c — structural state. Absorbed parts / split originals are
+   *  hidden from the default list (their absorber/children emit instead). */
+  origin: Frame["origin"];
+  absorbedInto: string | null;
+  splitInto: string[] | null;
   /** §11 Phase 2.7 — was this frame in the LAST emitted view? `false` flags a
    *  fork-only frame (stored, visible, deletable — but the next emission of the
    *  thread that didn't carry it will exclude it). `null` when not applicable:
@@ -154,6 +159,7 @@ export class FrameStore {
         injectedSystem,
         tokenEstimate: estimateTokens(system) + estimateTokens(tools),
         deleted: false,
+        origin: "captured",
         offloaded: false,
         fileReference: null,
         provenance: [],
@@ -190,7 +196,9 @@ export class FrameStore {
     // full source as live while compose emits the override). Re-assert the
     // invariant here; matching/mapping in reconcile stays untouched.
     for (const f of this.frames) {
-      if (f.representation) f.tokenEstimate = this.effectiveTokens(f);
+      if (f.representation || f.absorbedInto || f.splitInto) {
+        f.tokenEstimate = this.effectiveTokens(f);
+      }
     }
 
     // Existing frames whose NORMALIZED content materially changed this ingest — i.e. grew
@@ -245,8 +253,11 @@ export class FrameStore {
 
   /** Token estimate of what compose EMITS for a turn frame: the override when
    *  set, else the source (§11 Phase 3a invariant — see ingest/captureAssistant/
-   *  edit/compact/revert, every site where either may change). */
+   *  edit/compact/revert, every site where either may change). §11 Phase 3c:
+   *  absorbed parts and split originals emit nothing themselves (their absorber/
+   *  children carry the estimate) — 0 while structurally hidden. */
   private effectiveTokens(f: Frame): number {
+    if (f.absorbedInto || (f.splitInto && f.splitInto.length > 0)) return 0;
     return estimateTokens(f.representation ?? f.messages);
   }
 
@@ -279,6 +290,7 @@ export class FrameStore {
       stopReason: null,
       tokenEstimate: estimateTokens(inc.messages),
       deleted: false,
+      origin: "captured",
       offloaded: false,
       fileReference: null,
       provenance: [],
@@ -372,9 +384,11 @@ export class FrameStore {
     // Fork-only annotation (§11 Phase 2.7): a turn frame absent from the last
     // emitted view is stored-but-not-sent on that thread — surfaced so users
     // understand why side-query frames exist before deleting them. null = not
-    // applicable (preamble, or no view emitted yet).
+    // applicable: preamble, no view emitted yet, or MANUFACTURED frames (§11
+    // Phase 3c — never view members, yet added frames always emit and combined/
+    // children emit via resolution; flagging them fork-only would mislead).
     const inLastView =
-      f.kind === "turn" && this.lastEmittedView
+      f.kind === "turn" && f.origin === "captured" && this.lastEmittedView
         ? this.lastEmittedView.frameIds.includes(f.id)
         : null;
     return {
@@ -388,6 +402,9 @@ export class FrameStore {
       overridden: !!f.representation,
       offloaded: f.offloaded,
       fileReference: f.fileReference,
+      origin: f.origin,
+      absorbedInto: f.absorbedInto ?? null,
+      splitInto: f.splitInto && f.splitInto.length > 0 ? f.splitInto : null,
       inLastView,
     };
   }
@@ -403,6 +420,10 @@ export class FrameStore {
     const marked: string[] = [];
     for (const id of ids) {
       const f = this.show(id);
+      // Structurally hidden frames (absorbed parts / split originals) are not
+      // deletable — they already emit nothing themselves; revert the combine/
+      // split to operate on them. Skipped, not marked (§11 Phase 3c).
+      if (f && (f.absorbedInto || (f.splitInto && f.splitInto.length > 0))) continue;
       if (f && !f.deleted) {
         f.deleted = true;
         f.modifiedAt = ++this.seq;
@@ -447,22 +468,12 @@ export class FrameStore {
     id: string,
     input: RepInput,
   ): OpResult {
-    const f = this.show(id);
-    if (!f) return { ok: false, error: `no frame ${id}` };
-    if (f.kind === "preamble") {
-      // Temporary 3a limitation, NOT a semantic rule — the preamble is just a
-      // frame (§2.7) and head ops arrive with the offload slice (3b)/demo beats.
-      return { ok: false, error: `${type} on the preamble is not yet supported (deferred past 3a)` };
-    }
-    if (f.deleted) {
-      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
-    }
-    if (f.offloaded) {
-      // Reviewer-required guard (3b): edit/compact of an offloaded frame would
-      // leave stale offload metadata on a non-stub representation and muddy
-      // revert. Keep the current offload the LAST content commit on the frame.
-      return { ok: false, error: `frame ${id} is offloaded — restore it first` };
-    }
+    // Guards via opTarget (§11 Phase 3c): preamble deferred (temporary, not
+    // semantic — §2.7), deleted/offloaded/absorbed/split all refuse with the
+    // revert-or-restore-first pattern that keeps structural state coherent.
+    const t = this.opTarget(id, type);
+    if (!t.ok) return t;
+    const f = t.frame;
 
     // Build the new representation. --text carries the frame opener's role
     // (reviewer point 2: compact must not change role authorship as a side
@@ -512,17 +523,13 @@ export class FrameStore {
    *  same frame (append-only revert invariant; identical content re-offloads to
    *  the identical path — idempotent). The store stays the durable truth. */
   offload(id: string, opts: { summary?: string } = {}): OpResult {
-    const f = this.show(id);
-    if (!f) return { ok: false, error: `no frame ${id}` };
-    if (f.kind === "preamble") {
-      return { ok: false, error: `offload on the preamble is not yet supported (deferred past 3b)` };
-    }
-    if (f.deleted) {
-      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
-    }
-    if (f.offloaded) {
+    const pre = this.show(id);
+    if (pre?.offloaded) {
       return { ok: false, error: `frame ${id} is already offloaded — restore it first` };
     }
+    const t = this.opTarget(id, "offload");
+    if (!t.ok) return t;
+    const f = t.frame;
 
     const emission = f.representation ?? f.messages;
     const rendered = renderFrameMarkdown(f.id, f.title, emission);
@@ -607,17 +614,295 @@ export class FrameStore {
     return { ok: true, commit };
   }
 
+  /** `combine` (§5.B, §11 Phase 3c): merge ≥2 frames into one. The parts STAY in
+   *  the store as the reconcile match targets (their source identity is
+   *  unchanged — matching stays 1:1); they are marked absorbed and compose
+   *  resolves them to the combined frame, emitted ONCE at the first part's slot
+   *  (Appendix C's many-to-many emission, implemented as indirection). The
+   *  combined frame's messages are the parts' EMISSIONS at combine time
+   *  (representation ?? messages), concatenated. Parts' sources may keep
+   *  refreshing from resends; compose ignores their content while absorbed
+   *  (reviewer RC4, option a). */
+  combine(ids: string[]): OpResult {
+    if (ids.length < 2 || new Set(ids).size !== ids.length) {
+      return { ok: false, error: "combine needs at least 2 distinct frame ids" };
+    }
+    const parts: Frame[] = [];
+    for (const id of ids) {
+      const t = this.opTarget(id, "combine");
+      if (!t.ok) return t;
+      const refusal = this.refuseStructuralProduct(t.frame, "combine");
+      if (refusal) return refusal;
+      parts.push(t.frame);
+    }
+    const messages = structuredClone(
+      parts.flatMap((p) => p.representation ?? p.messages),
+    );
+    const combined = this.makeManufactured("combined", messages);
+    const commit = this.makeCommit(
+      "combine",
+      [...ids, combined.id],
+      { partIds: [...ids], combinedId: combined.id },
+      `combine ${ids.join("+")} -> ${combined.id}`,
+    );
+    combined.provenance.push(commit.id);
+    this.frames.push(combined);
+    for (const p of parts) {
+      p.absorbedInto = combined.id;
+      p.tokenEstimate = this.effectiveTokens(p); // 0 while structurally hidden
+      p.modifiedAt = ++this.seq;
+      p.provenance.push(commit.id);
+    }
+    this.commits.record(commit);
+    this.recordEvent("combine", [...ids, combined.id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** `split` (§5.B, §11 Phase 3c): split one frame's EMISSION into several at
+   *  message boundaries (block-level splitting deferred). The original stays as
+   *  the match target, marked split; compose resolves it to the children, in
+   *  order, at its slot. Children deep-clone their message ranges and are
+   *  ordinary frames thereafter. */
+  split(id: string, at: number[]): OpResult {
+    const t = this.opTarget(id, "split");
+    if (!t.ok) return t;
+    const refusal = this.refuseStructuralProduct(t.frame, "split");
+    if (refusal) return refusal;
+    const f = t.frame;
+    const emission = f.representation ?? f.messages;
+    if (emission.length < 2) {
+      return {
+        ok: false,
+        error: `frame ${id} emits only ${emission.length} message(s) — nothing to split at a message boundary`,
+      };
+    }
+    const bounds = [...new Set(at)].sort((a, b) => a - b);
+    if (
+      bounds.length === 0 ||
+      bounds.some((b) => !Number.isInteger(b) || b <= 0 || b >= emission.length)
+    ) {
+      return {
+        ok: false,
+        error: `--at boundaries must be distinct integers between 1 and ${emission.length - 1}`,
+      };
+    }
+    const ranges: WireMessage[][] = [];
+    let start = 0;
+    for (const b of bounds) {
+      ranges.push(structuredClone(emission.slice(start, b)));
+      start = b;
+    }
+    ranges.push(structuredClone(emission.slice(start)));
+
+    const children = ranges.map((r) => this.makeManufactured("split", r));
+    const childIds = children.map((c) => c.id);
+    const commit = this.makeCommit(
+      "split",
+      [id, ...childIds],
+      { originalId: id, childIds, at: bounds },
+      `split ${id} -> ${childIds.join("+")}`,
+    );
+    for (const c of children) {
+      c.provenance.push(commit.id);
+      this.frames.push(c);
+    }
+    f.splitInto = childIds;
+    f.tokenEstimate = this.effectiveTokens(f); // 0 while structurally hidden
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent("split", [id, ...childIds], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
   /** The commit that established a frame's CURRENT offload: its most recent
    *  `offload` commit. Valid lookup because offloaded frames refuse edit/compact
    *  and (below) refuse reverts of other content commits — so while offloaded,
    *  the last content commit IS the offload. Shared by restore() and the revert
    *  coherence guard. */
   private currentOffloadCommit(f: Frame): Commit | null {
+    return this.lastCommitOfType(f, "offload");
+  }
+
+  private lastCommitOfType(f: Frame, type: CommitType): Commit | null {
     for (let i = f.provenance.length - 1; i >= 0; i--) {
       const c = this.commits.get(f.provenance[i]!);
-      if (c && c.type === "offload") return c;
+      if (c && c.type === type) return c;
     }
     return null;
+  }
+
+  // ---- §11 Phase 3c structural ops ----
+
+  /** Manufactured frame factory (origin added/combined/split): sentinel anchor
+   *  (never collides with a sha-hex fingerprint, never recomputed on restore —
+   *  unmatchable by design, reviewer RC1), createdEventId permanently null (the
+   *  creating COMMIT lives in provenance). */
+  private makeManufactured(
+    origin: "added" | "combined" | "split",
+    messages: WireMessage[],
+  ): Frame {
+    const id = `t${++this.turnCounter}`;
+    return {
+      id,
+      kind: "turn",
+      role: messages[0]?.role === "assistant" ? "assistant" : "user",
+      title: `frame ${id}`,
+      anchorFp: `manufactured:${origin}:${id}`,
+      occurrence: 0,
+      messages,
+      stopReason: null,
+      tokenEstimate: estimateTokens(messages),
+      deleted: false,
+      origin,
+      offloaded: false,
+      fileReference: null,
+      provenance: [],
+      createdEventId: null,
+      createdAt: ++this.seq,
+      modifiedAt: this.seq,
+    };
+  }
+
+  /** Common guard for ops needing a LIVE, structurally-unencumbered turn frame. */
+  private opTarget(
+    id: string,
+    op: string,
+  ): { ok: true; frame: Frame } | { ok: false; error: string } {
+    const f = this.show(id);
+    if (!f) return { ok: false, error: `no frame ${id}` };
+    if (f.kind === "preamble") {
+      return { ok: false, error: `${op} on the preamble is not yet supported (deferred)` };
+    }
+    if (f.deleted) {
+      return { ok: false, error: `frame ${id} is deleted — revert the delete first` };
+    }
+    if (f.offloaded) {
+      return { ok: false, error: `frame ${id} is offloaded — restore it first` };
+    }
+    if (f.absorbedInto) {
+      return { ok: false, error: `frame ${id} is absorbed into ${f.absorbedInto} — revert the combine first` };
+    }
+    if (f.splitInto && f.splitInto.length > 0) {
+      return { ok: false, error: `frame ${id} was split into ${f.splitInto.join(", ")} — revert the split first` };
+    }
+    return { ok: true, frame: f };
+  }
+
+  /** §11 Phase 3c (reviewer-caught): combine/split/move refuse STRUCTURAL
+   *  PRODUCTS (origin combined/split). Nested absorption and move-over-
+   *  absorption are separate ordering/coherence models the 3c revert guards do
+   *  not reason about — combined frames and split children stay ordinary for
+   *  edit/compact/offload/delete only. Added frames remain fully operable. */
+  private refuseStructuralProduct(f: Frame, op: string): OpResult | null {
+    if (f.origin === "combined" || f.origin === "split") {
+      const undo = f.origin === "combined" ? "combine" : "split";
+      return {
+        ok: false,
+        error: `frame ${f.id} is a ${f.origin} structural product — ${op} on it is not supported (revert the ${undo} first)`,
+      };
+    }
+    return null;
+  }
+
+  /** `add` (§5.B, §11 Phase 3c): create a frame the agent never produced — an
+   *  instruction/note/seed. NO source identity (sentinel anchor): it is never
+   *  matched by a resend, so it is a member of EVERY emission by USER OP — the
+   *  one deliberate membership extension beyond the request (2.7 guardrail).
+   *  Default placement: after the last live turn frame at add time. */
+  add(input: RepInput, opts: { after?: string | null } = {}): OpResult {
+    let messages: WireMessage[];
+    if ("text" in input) {
+      messages = [{ role: "user", content: input.text }];
+    } else {
+      if (
+        !Array.isArray(input.raw) ||
+        input.raw.length === 0 ||
+        !input.raw.every(
+          (m) =>
+            m &&
+            (m.role === "user" || m.role === "assistant") &&
+            (typeof m.content === "string" || Array.isArray(m.content)),
+        )
+      ) {
+        return {
+          ok: false,
+          error: `--raw must be a non-empty WireMessage[] (role user|assistant, content string|blocks)`,
+        };
+      }
+      messages = structuredClone(input.raw);
+    }
+
+    let after: string | null;
+    if (opts.after === undefined) {
+      // "End of the conversation" = after the last live CAPTURED frame: other
+      // manufactured frames may themselves be placed anywhere, so anchoring to
+      // the store tail could chain the new note behind an earlier insertion.
+      const last = [...this.frames]
+        .reverse()
+        .find((f) => !f.deleted && f.origin === "captured");
+      after = last ? last.id : null;
+    } else if (opts.after === null) {
+      after = null; // explicit start
+    } else {
+      if (!this.frames.some((f) => f.id === opts.after)) {
+        return { ok: false, error: `--after target ${opts.after} does not exist` };
+      }
+      after = opts.after;
+    }
+
+    const f = this.makeManufactured("added", messages);
+    f.placement = { after };
+    const commit = this.makeCommit(
+      "add",
+      [f.id],
+      { content: structuredClone(messages), placement: { after } },
+      `add ${f.id}`,
+    );
+    f.provenance.push(commit.id);
+    this.frames.push(f);
+    this.commits.record(commit);
+    this.recordEvent("add", [f.id], commit.id);
+    this.persist();
+    return { ok: true, commit };
+  }
+
+  /** `move` (§5.B, §11 Phase 3c): reorder an EXISTING member's emission slot.
+   *  Strictly an ordering override — move never creates membership: a fork-only
+   *  frame that is moved still stays off emissions whose request didn't carry
+   *  it (reviewer RC2). Caching note (§9): moving early frames re-tokenizes the
+   *  tail. */
+  move(id: string, opts: { after: string | null }): OpResult {
+    const t = this.opTarget(id, "move");
+    if (!t.ok) return t;
+    // A combined frame emits at its first part's slot and children emit at the
+    // original's slot — placement is not consulted there, so a move would be
+    // silently ineffective. Refuse rather than record a no-op commit.
+    const refusal = this.refuseStructuralProduct(t.frame, "move");
+    if (refusal) return refusal;
+    const f = t.frame;
+    if (opts.after === id) {
+      return { ok: false, error: `cannot move ${id} after itself` };
+    }
+    if (opts.after !== null && !this.frames.some((x) => x.id === opts.after)) {
+      return { ok: false, error: `--after target ${opts.after} does not exist` };
+    }
+    const before = f.placement ? { ...f.placement } : null;
+    const commit = this.makeCommit(
+      "move",
+      [id],
+      { before, after: { after: opts.after } },
+      `move ${id} ${opts.after === null ? "to start" : `after ${opts.after}`}`,
+    );
+    f.placement = { after: opts.after };
+    f.modifiedAt = ++this.seq;
+    f.provenance.push(commit.id);
+    this.commits.record(commit);
+    this.recordEvent("move", [id], commit.id);
+    this.persist();
+    return { ok: true, commit };
   }
 
   /** Revert a `delete`/`edit`/`compact`/`offload`/`restore` commit (append-only
@@ -642,7 +927,9 @@ export class FrameStore {
         error: commitId ? `no commit ${commitId}` : "no commits to revert",
       };
     }
-    const revertible = ["delete", "edit", "compact", "offload", "restore"];
+    const revertible = [
+      "delete", "edit", "compact", "offload", "restore", "add", "move", "combine", "split",
+    ];
     if (!revertible.includes(target.type)) {
       return {
         ok: false,
@@ -660,17 +947,92 @@ export class FrameStore {
       };
     }
     if (target.type !== "delete") {
+      // Structural-state coherence guards (3b pattern, generalized for 3c):
+      // while a frame is offloaded/absorbed/split, only the commit that
+      // ESTABLISHED that state may be reverted — anything else would swap the
+      // emission or metadata out from under the active structure.
       for (const id of target.affectedFrameIds) {
         const f = this.show(id)!;
-        if (!f.offloaded) continue;
-        const current = this.currentOffloadCommit(f);
-        if (!current || current.id !== target.id) {
+        if (f.offloaded) {
+          const current = this.currentOffloadCommit(f);
+          if (!current || current.id !== target.id) {
+            return {
+              ok: false,
+              error:
+                `frame ${id} is offloaded — restore it first ` +
+                `(while offloaded, only its current offload commit can be reverted)`,
+            };
+          }
+        }
+        if (f.absorbedInto) {
+          const current = this.lastCommitOfType(f, "combine");
+          if (!current || current.id !== target.id) {
+            return {
+              ok: false,
+              error: `frame ${id} is absorbed into ${f.absorbedInto} — revert the combine first`,
+            };
+          }
+        }
+        if (f.splitInto && f.splitInto.length > 0) {
+          const current = this.lastCommitOfType(f, "split");
+          if (!current || current.id !== target.id) {
+            return {
+              ok: false,
+              error: `frame ${id} was split — revert the split first`,
+            };
+          }
+        }
+      }
+    }
+    // Precise structural-revert eligibility (reviewer E): revert must restore a
+    // COHERENT structural state, never half-clear metadata.
+    if (target.type === "combine") {
+      const { partIds, combinedId } = target.params as {
+        partIds: string[];
+        combinedId: string;
+      };
+      const combined = this.show(combinedId)!;
+      if (combined.deleted) {
+        return { ok: false, error: `combined frame ${combinedId} is deleted — revert the delete first` };
+      }
+      // STATE-based pristine check (not history-based): downstream commits that
+      // have themselves been reverted leave the frame coherent again, and the
+      // combine may then be reverted. Live downstream state blocks it.
+      if (combined.representation || combined.offloaded || combined.placement) {
+        return {
+          ok: false,
+          error: `combined frame ${combinedId} has downstream state (edit/offload/move) — revert those first`,
+        };
+      }
+      for (const pid of partIds) {
+        if (this.show(pid)!.absorbedInto !== combinedId) {
           return {
             ok: false,
-            error:
-              `frame ${id} is offloaded — restore it first ` +
-              `(while offloaded, only its current offload commit can be reverted)`,
+            error: `frame ${pid} is no longer absorbed by ${combinedId} — cannot revert ${target.id}`,
           };
+        }
+      }
+    }
+    if (target.type === "split") {
+      const { originalId, childIds } = target.params as {
+        originalId: string;
+        childIds: string[];
+      };
+      const original = this.show(originalId)!;
+      if (JSON.stringify(original.splitInto ?? []) !== JSON.stringify(childIds)) {
+        return {
+          ok: false,
+          error: `frame ${originalId} no longer points at exactly ${childIds.join(", ")} — cannot revert ${target.id}`,
+        };
+      }
+      for (const cid of childIds) {
+        const child = this.show(cid)!;
+        if (child.deleted) {
+          return { ok: false, error: `split child ${cid} is deleted — revert the delete first` };
+        }
+        // State-based pristine check — same rationale as revert(combine).
+        if (child.representation || child.offloaded || child.placement) {
+          return { ok: false, error: `split child ${cid} has downstream state (edit/offload/move) — revert those first` };
         }
       }
     }
@@ -685,6 +1047,31 @@ export class FrameStore {
       const f = this.show(id)!;
       if (target.type === "delete") {
         f.deleted = false; // lift the tombstone; the frame resumes absorbing the resend
+      } else if (target.type === "add") {
+        // Append-only un-create (§11 Phase 3c, reviewer point B): the added
+        // frame is tombstoned — still showable and audit-complete. Note: the
+        // resulting tombstone is part of the revert commit, so it cannot be
+        // revert-of-reverted in this phase (revert commits are not revertible).
+        f.deleted = true;
+      } else if (target.type === "move") {
+        const params = target.params as { before?: { after: string | null } | null };
+        f.placement = params.before ? { ...params.before } : null;
+      } else if (target.type === "combine") {
+        const { combinedId } = target.params as { combinedId: string };
+        if (f.id === combinedId) {
+          f.deleted = true; // append-only un-create of the manufactured frame
+        } else {
+          f.absorbedInto = null; // part resumes emitting itself
+          f.tokenEstimate = this.effectiveTokens(f);
+        }
+      } else if (target.type === "split") {
+        const { originalId } = target.params as { originalId: string };
+        if (f.id === originalId) {
+          f.splitInto = null; // original resumes emitting itself
+          f.tokenEstimate = this.effectiveTokens(f);
+        } else {
+          f.deleted = true; // children tombstoned (append-only un-create)
+        }
       } else {
         // Content-op inverse: restore the prior representation value (which may
         // be null = no override). Source `messages` are never touched.
@@ -795,6 +1182,11 @@ export class FrameStore {
     }
     const seen = new Map<string, number>();
     for (const f of this.frames) {
+      // MANUFACTURED frames (origin added/combined/split) keep their persisted
+      // sentinel anchors: recomputing from messages would hand them a REAL
+      // anchor that could match a future resend (§11 Phase 3c, reviewer RC1 —
+      // the 3a restore-identity trap, inverted).
+      if (f.origin !== "captured") continue;
       if (f.messages.length > 0) f.anchorFp = fingerprintMessage(f.messages[0]!);
       const n = seen.get(f.anchorFp) ?? 0;
       f.occurrence = n;

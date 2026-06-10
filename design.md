@@ -963,7 +963,24 @@ rule lives or dies on this gate).
     inline — provider assumption 5 validated. Originally:
     validates file-read retrieval (assumption 5); the live
     token-reclamation beat.
-  - **3c** `combine`, `split`, `move`, `add` — structural reshaping.
+  - **3c** `combine`, `split`, `move`, `add` — **Status: built and live-validated
+    (2026-06-10).** Both structural mechanisms are resolution layers over the
+    (view, store) split; reconcile matching AND refresh untouched. PLACEMENT:
+    `Frame.placement` re-splices the emission order; added frames (origin
+    "added", sentinel anchor, never restore-recomputed) are members of EVERY
+    emission by user op — the reserved 2.7 membership extension; move is
+    ordering-only (never creates membership). ABSORPTION: combine parts / split
+    originals stay as 1:1 match targets and resolve to absorber/children at
+    compose (Appendix C's many-to-many emission as indirection); structural
+    products refuse combine/split/move (nested absorption unsupported);
+    state-based pristine checks gate structural reverts. structureWarnings +
+    emittedFrameIds join the evidence surfaces. Snapshot v5. Live real-TUI:
+    `ctx add` injected a mid-session instruction the model read and (after a
+    fake-system phrasing was edit-revised and the model's own refusal turn was
+    DELETED) obeyed — add+edit+delete interplaying live; combine emitted once at
+    the first part's slot (wiretap emittedFrameIds vs viewFrameIds); the model's
+    own recap listed every question EXCEPT the deleted one. Originally:
+    structural reshaping.
   - **3d** `strip`, `summarize`, `retitle` — sub-frame content ops.
 - **Files/modules:** `engine/ops/*` (one module per op), `cli/` (verbs),
   `engine/compose` (per-op resolution), `engine/llm` (compact/summarize/title generation).

@@ -26,9 +26,10 @@ import type { Frame, RequestEnvelope } from "./types.ts";
 /** Bump only with an explicit migration. Phase 2 refuses to load a foreign version
  *  rather than guessing (no migrations in scope). v2 added the event log. */
 // v3 (§11 Phase 3a): Frame gains the optional `representation` override.
-// v4 (§11 Phase 3b): Frame gains `offloaded` + `fileReference`. No migrations —
-// older stores fail loudly per policy.
-export const SNAPSHOT_VERSION = 4;
+// v4 (§11 Phase 3b): Frame gains `offloaded` + `fileReference`.
+// v5 (§11 Phase 3c): Frame gains `origin` + `placement` + `absorbedInto` +
+// `splitInto`. No migrations — older stores fail loudly per policy.
+export const SNAPSHOT_VERSION = 5;
 
 /** The whole durable state. Internal seq fields (createdAt/modifiedAt/seq) live here —
  *  they belong in the store but never on the wire (compose strips them out already). */
