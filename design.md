@@ -1025,6 +1025,14 @@ rule lives or dies on this gate).
 
 ### Phase 4 — Branching
 
+> **Re-sequencing note (2026-06-10, Nil):** Phase 5 (UI) runs **before** Phase 4 —
+> get the UI right for the **single-branch** case first, extend to multi-branch
+> after. This exercises the path Phase 5 itself pre-authorizes below ("acceptable
+> earlier if momentum demands it"): the Phase 5 frame view lands as a **linear
+> frame list** (no SVG git-tree — that genuinely wants branches to exist), and
+> Phase 4 accepts modest rework risk in the tree view when branches arrive.
+> Implementation-shape change only; no locked design decision moves.
+
 - **4a — basic branching (M).**
   - **Goal:** fork / inspect / cherry-pick context across branches with single-branch
     compose.

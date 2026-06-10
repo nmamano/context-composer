@@ -13,6 +13,7 @@
 // disk-only coordination); by default it targets the ACTIVE conversation, with
 // ?conv=<id> to override.
 
+import { resolve, sep } from "node:path";
 import { PROXY_PORT, STORE_PATH, WIRETAP_PATH } from "../config.ts";
 import { ConversationRegistry } from "../engine/registry.ts";
 import type { FrameStore } from "../engine/state.ts";
@@ -87,6 +88,9 @@ export function startProxy(opts: {
    *  (CC_LLM_API_KEY + CC_LLM_MODEL, or null = regen unavailable with a clear
    *  error). Tests inject a deterministic stub — gates never need a key. */
   llm?: LlmClient | null;
+  /** Where the built UI lives (§11 Phase 5a). Omit for ui/dist; tests pass a
+   *  tmp dir (same seam pattern as storePath/framesDir). */
+  uiDistDir?: string;
 } = {}): ProxyHandle {
   const registry = new ConversationRegistry(opts.storePath ?? null, opts.framesDir);
   const llm = opts.llm !== undefined ? opts.llm : envLlmClient();
@@ -534,6 +538,39 @@ export function startProxy(opts: {
     }
   }
 
+  // §11 Phase 5a — daemon-served UI (design.md §3/§8: thin wrapper, same origin as
+  // /control so the browser needs no CORS/proxy layer). Static GET/HEAD only, from
+  // ui/dist (built by `bun run ui:build`). NEVER shadows owned routes (checked after
+  // them) and never swallows passthrough (only /ui and /ui/* match). No directory
+  // listing; no path traversal (resolved path must stay inside ui/dist); SPA index
+  // fallback ONLY under /ui.
+  const UI_DIST = resolve(opts.uiDistDir ?? resolve(import.meta.dir, "../../ui/dist"));
+  async function handleUi(req: Request, url: URL): Promise<Response> {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return json({ error: "method not allowed" }, 405);
+    }
+    const rel =
+      url.pathname === "/ui" || url.pathname === "/ui/"
+        ? "index.html"
+        : decodeURIComponent(url.pathname.slice("/ui/".length));
+    const path = resolve(UI_DIST, rel);
+    if (path !== UI_DIST && !path.startsWith(UI_DIST + sep)) {
+      return json({ error: "not found" }, 404); // traversal attempt — refuse, stay local
+    }
+    let file = Bun.file(path);
+    if (!(await file.exists())) {
+      // Unknown subpath (or a directory): fall back to the shell — but only under
+      // /ui, and only when the UI is actually built.
+      file = Bun.file(resolve(UI_DIST, "index.html"));
+      if (!(await file.exists())) {
+        return json({ error: "UI not built — run `bun run ui:build` first" }, 404);
+      }
+    }
+    return new Response(req.method === "HEAD" ? null : file, {
+      headers: { "content-type": file.type || "application/octet-stream" },
+    });
+  }
+
   const server = Bun.serve({
     port: opts.port ?? PROXY_PORT,
     idleTimeout: 120, // SSE round-trips can outlast the 10s default
@@ -545,6 +582,9 @@ export function startProxy(opts: {
       }
       if (url.pathname.startsWith("/control/")) {
         return handleControl(req, url); // local control API (its own 404 for unknown routes)
+      }
+      if (url.pathname === "/ui" || url.pathname.startsWith("/ui/")) {
+        return handleUi(req, url); // §11 Phase 5a — local static UI, never passthrough
       }
       // Everything else is NOT ours: pipe it to the real upstream untouched and stream the
       // response back (Phase 2.5). No ingest, no compose, no engine touch. The wiretap

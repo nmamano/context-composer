@@ -8,10 +8,21 @@
     "proxy": "bun run src/proxy/server.ts",
     "ctx": "bun run src/cli/ctx.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "demo": "bun run scripts/phase1-walkthrough.ts"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p ui",
+    "demo": "bun run scripts/phase1-walkthrough.ts",
+    "ui:build": "bun build ui/index.html --outdir ui/dist --public-path=/ui/",
+    "ui:smoke": "bash scripts/ui-smoke.sh"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@happy-dom/global-registrator": "20.10.2",
+    "@types/bun": "latest",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "happy-dom": "20.10.2",
+    "playwright": "1.60.0"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   }
 }

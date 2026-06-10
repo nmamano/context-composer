@@ -36,7 +36,8 @@ commit. Author each slice's handoff section in THIS file before its plan gate.
 ### Gates per slice
 
 Engine gates (unchanged — the UI must never break the proxy):
-`bunx tsc --noEmit`, `bun test`, `bun run demo`, `bash scripts/live-e2e.sh`,
+`bunx tsc --noEmit` (+ `tsc --noEmit -p ui` since 5a — the UI is its own ts
+project for DOM/jsx), `bun test`, `bun run demo`, `bash scripts/live-e2e.sh`,
 `bash scripts/live-phase2.sh`. Run the standing real-TUI smoke (design.md §11
 "Standing gate") whenever daemon/engine paths changed.
 
@@ -75,7 +76,7 @@ available: system Google Chrome 145 + Playwright 1.60 via bunx):
 
 ## Slice plan (vertical tracer slices; one commit each)
 
-- [ ] 5a — SCAFFOLD + READ-ONLY VIEWS + BROWSER GATE. ui/ React app served by
+- [x] 5a — SCAFFOLD + READ-ONLY VIEWS + BROWSER GATE. ui/ React app served by
   the daemon (or a dev server proxying /control — decide with reviewer);
   conversation view (chat transcript rendered from frames) ⇄ frame view
   (linear frame cards: title — summary, tokens, flags [deleted/override/
@@ -128,3 +129,137 @@ available: system Google Chrome 145 + Playwright 1.60 via bunx):
 - House test patterns: test/*.test.ts (stub upstream, fixed-port restart
   tests); TUI smoke mechanics in design.md §11 Standing gate.
 - Phase 3 loop file (plans/phase3-loop.md) — the template for everything.
+
+---
+
+## PHASE 5a PICKUP (scaffold + read-only views + browser gate)
+
+Repo: /home/nil/nil/context-composer (TS on Bun), branch master.
+Baseline at authoring time: master @ fa61657 (Phase 3 complete: all 14 ops
+live-validated; design.md §11 Phase 3a–3d Status has the evidence).
+
+### Goal
+
+Implement the read-only foundation of design.md §11 Phase 5, re-sequenced
+before Phase 4 per the decision above: a `ui/` React app rendering one
+conversation through BOTH views (conversation ⇄ frame) with a toggle, a
+details panel, and a conversations switcher — fed exclusively by the existing
+control API. NO ops in this slice (5b). The Playwright real-browser gate
+harness lands IN THIS SLICE and becomes the standing UI gate for 5b/5c. This
+slice also adds the re-sequencing note to design.md §11 (implementation-shape
+change, reviewed via this plan gate — not a locked-design change).
+
+### Load-bearing mechanics (get these right or the UI rots from day one)
+
+1. **THIN WRAPPER (§3, §8 — the north star applied):** the UI owns no frame
+   state and no op logic. Every pixel derives from control API responses
+   (/control/conversations, /control/list, /control/show); client state is
+   limited to view-toggle/selection/fetch-cache. If a component starts
+   deciding what a frame "means" beyond rendering returned fields, stop.
+2. **CONVERSATION VIEW = render the frames' own messages.** A frame bundles
+   user turn + assistant reply + tool loop (locked granularity). The chat
+   transcript is the concatenation of each live frame's messages in store
+   order — rendered from frame content, NOT from a separate transcript
+   source. Tool_use/tool_result render as plain collapsed blocks (§4: no
+   special widgets, §9). Deleted frames: hidden in conversation view,
+   visible-but-flagged in frame view (the two views genuinely differ here —
+   that asymmetry is the §4 design, preserve it).
+3. **FRAME VIEW = LINEAR LIST deliberately** (no SVG git-tree — needs Phase 4
+   branches; parked). Cards: title — summary, tokenEstimate, flag chips
+   (deleted / overridden / offloaded / added(origin) / fork-only(inLastView=
+   false) / absorbedInto / splitInto). Click → details panel: full content,
+   provenance, fileReference.
+4. **NO ENGINE CHANGES.** proxy/server.ts may gain only static-file serving
+   for ui/dist (read-only GET, no /control semantics change) IF the daemon-
+   served option is chosen. Any new/extended control route triggers the
+   parity rail (CLI verb same slice) — avoid in 5a if at all possible.
+5. **SMOKE-DAEMON ISOLATION:** the Playwright gate boots its OWN daemon on
+   its own port (never 8788; avoid fixed test ports 8796/8797/8799) with
+   CC_STORE_PATH + CC_WIRETAP_PATH + CC_FRAMES_DIR under /tmp/cc-ui-smoke-*.
+   Store fixture: a real store captured from a TUI session (copy a fixture
+   store under /tmp, point the daemon at it) so acceptance is "real TUI data
+   renders", not synthetic data.
+6. **JUDGE VIA THE CONTROL API, NOT THE DOM:** the browser asserts the DOM
+   matches what /control/list/show report (frame count, titles, flags,
+   content presence) — the API is the truth, the DOM is the pane. Screenshots
+   to /tmp/cc-ui-smoke-*/ as evidence artifacts.
+7. **DEPS MINIMAL AND PINNED:** react + react-dom (pinned), playwright
+   (devDep, pinned, drives system Chrome 145 via channel:"chrome" headless —
+   no browser downloads), happy-dom (or equivalent) for component tests.
+   Bundler: Bun-native (Bun.build / bun build, zero new deps) vs vite —
+   decide with reviewer (proposal below).
+
+### Acceptance (loop-file 5a + design.md §11 Phase 5 read-only subset)
+
+1. A store populated by a REAL TUI session renders correctly in both views in
+   a REAL browser (system Chrome via Playwright, headless): conversation view
+   shows the chat transcript; frame view shows every frame card with correct
+   title/summary/tokens/flags; toggle switches views; details panel shows
+   full content + provenance + fileReference for an offloaded frame.
+2. Conversations switcher lists registry conversations and switches.
+3. Component tests (bun test, happy-dom) cover transcript assembly from
+   frames, flag-chip rendering, and details-panel field mapping.
+4. Playwright smoke is reproducible via one script entry (test/ui-smoke or
+   scripts/ui-smoke — decide with reviewer), boots its own daemon, judges via
+   control API, saves screenshots; passes headless.
+5. All engine gates still green: tsc --noEmit, bun test, demo, live-e2e,
+   live-phase2 (UI must never break the proxy). No real-TUI smoke needed
+   UNLESS daemon/engine paths changed (static serving in server.ts counts →
+   run it then).
+6. design.md §11 carries the re-sequencing note (Phase 5 before Phase 4,
+   single-branch UI first, §11 pre-authorization cited).
+
+### Decide with reviewer (open, not locked)
+
+- **Serving: daemon-served static bundle (proposal) vs separate dev server
+  proxying /control.** Proposal: daemon serves ui/dist at GET /ui/* — it's
+  the product shape (one process, no CORS, no second port), ~20 lines in
+  server.ts; keep a `bun run ui:dev` convenience path only if it costs
+  nothing. Counter-case: zero daemon changes in 5a keeps the engine-gate
+  surface untouched.
+- **Bundler: Bun-native build (proposal — zero new deps, bun build
+  ui/index.tsx) vs vite.** Vite earns its keep on HMR/dev-server; if
+  daemon-served + no dev server, Bun-native suffices.
+- **How conversation view gets full content:** /control/show per frame
+  (N requests, zero API changes — proposal for 5a) vs extending /control/list
+  with content (touches the API + parity rail). N is small single-branch;
+  optimize only when real.
+- **Refresh strategy for 5a:** manual refresh / on-focus refetch (proposal)
+  vs polling. "Both views update after ops" is 5b acceptance; don't pre-build
+  SSE/push — but pick a shape that 5b's post-op refetch drops into.
+- **Component-test stack:** happy-dom + plain render assertions vs adding
+  @testing-library/react. Whichever, keep it to devDeps and house style.
+- **Harness home:** test/ui-smoke.test.ts gated by an env var (house pattern:
+  live tests behind flags) vs scripts/ui-smoke.sh like live-e2e. Must not run
+  in the default `bun test` (needs Chrome + daemon).
+
+### Locked — don't relitigate
+
+- UI is a THIN wrapper: no op logic, no owned frame state, no second
+  operation client (§3, §8); ops land in 5b through the same control routes.
+- No `send` from the UI — the wrapped agent is the only turn originator
+  (parked list). No ops at all in 5a (read-only).
+- Linear frame list in 5a — the SVG git-tree needs branches (parked for
+  Phase 4+).
+- Faithful compose, model-unaware, no content heuristics, frame uniformity,
+  per-request view scoping — engine rails unchanged; the UI renders what the
+  API returns, it never reinterprets.
+- Never touch the 8788 daemon or its store/wiretap.
+- Scope guard: 5a is scaffold + read-only views + browser gate ONLY — no op
+  menu, no history panel (5c), no timeline, no regen (5d).
+
+### Resources
+
+- design.md: §3 (CLI-first, UI thin wrapper), §4 (two views), §8 (UI
+  architecture), §9 (no special widgets), §11 Phase 5 + Standing gate +
+  Decisions, §7 (data model — FrameSummary fields).
+- Control API surface: see Resources at top of this file; proxy/server.ts
+  lines ~246–546 (routes), engine/registry.ts (conversations),
+  engine/types.ts (Frame/FrameSummary).
+- Verified available: system Google Chrome 145, Playwright 1.60 via bunx
+  (channel:"chrome", headless).
+- House patterns: test/*.test.ts (stub upstream, env-gated live tests),
+  scripts/live-e2e.sh (scripted gate shape), phase3-loop.md handoffs (this
+  format).
+- Evidence: /tmp/cc-ui-smoke-*/ screenshots + the smoke daemon's wiretap/
+  control responses.

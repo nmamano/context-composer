@@ -11,3 +11,6 @@ node_modules/
 
 # §11 Phase 3b offload artifacts (rendered frame content — conversation data)
 .ctx-frames/
+
+# §11 Phase 5a UI build output (rebuilt by `bun run ui:build`)
+ui/dist/
