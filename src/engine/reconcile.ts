@@ -13,6 +13,13 @@
 // at/after a moving pointer. This disambiguates duplicate fingerprints by order
 // (the documented duplicate-message limitation — see fingerprint.ts). New content
 // (always at the tail, since the agent appends) has no match and is appended.
+//
+// Returns the REQUEST-VIEW mapping (§11 Phase 2.7): one frame id per incoming
+// frame, in incoming order — the matched existing frame's id (tombstone matches
+// INCLUDED) or the freshly appended frame's id. Compose-from-view consumes this to
+// scope emission to the current request: frames a fork wrote into the store stay
+// stored but are absent from emissions whose request didn't carry them. The
+// matching itself is unchanged — scope emission, not matching.
 
 import type { DecomposedFrame, Frame, WireMessage } from "./types.ts";
 
@@ -27,7 +34,8 @@ export function reconcile(
   existing: Frame[],
   incoming: DecomposedFrame[],
   deps: ReconcileDeps,
-): Frame[] {
+): string[] {
+  const viewFrameIds: string[] = [];
   const consumed = new Set<number>();
   let pointer = 0; // existing frames at/after here are still matchable in order
   // Only frames present BEFORE this pass are matchable. Frames appended during this
@@ -56,11 +64,16 @@ export function reconcile(
         frame.tokenEstimate = deps.estimate(inc.messages);
         frame.modifiedAt = deps.nextSeq();
       }
-      // Tombstone branch: ignore resent content; the frame stays deleted/omitted.
+      // Tombstone branch: ignore resent content; the frame stays deleted/omitted —
+      // but it IS part of the request's view (matched), so compose-from-view can
+      // honor the tombstone explicitly rather than by accident of store order.
+      viewFrameIds.push(frame.id);
     } else {
-      existing.push(deps.makeFrame(inc));
+      const f = deps.makeFrame(inc);
+      existing.push(f);
+      viewFrameIds.push(f.id);
     }
   }
 
-  return existing;
+  return viewFrameIds;
 }

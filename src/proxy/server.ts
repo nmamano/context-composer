@@ -101,12 +101,29 @@ export function startProxy(opts: {
 
     let composed;
     let targetId;
+    let view;
+    let omittedFrameIds: string[];
     try {
-      store.ingest(body); // also persists (session-ingest); may throw on a disk failure
-      composed = store.compose();
-      // Bind the capture to the frame open RIGHT NOW (explicit target), not to
-      // whatever is last when the capture promise later resolves.
-      targetId = store.openFrameId();
+      view = store.ingest(body); // also persists (session-ingest); may throw on a disk failure
+      // §11 Phase 2.7: compose THIS REQUEST'S view — frames another request forked
+      // into the store never ride along. Record the attempted-outbound view right
+      // after composing (before forward, so even a 502'd request counts — it is
+      // what we composed for the wire, and the wiretap entry below matches it).
+      composed = store.compose(view);
+      store.noteEmittedView(view);
+      // Bind the capture to the VIEW's open frame (explicit target) — not the store
+      // tail, and not whatever is last when the capture promise later resolves: a
+      // fork's reply must land on the fork's own open frame.
+      targetId = view.openFrameId;
+      // Store turn frames OUTSIDE this request's view — unmatched: fork-only frames
+      // and tombstones the request didn't resend. NOT "every frame omitted from
+      // messages": tombstones INSIDE the view are also omitted from the body but
+      // are matched, so they don't appear here.
+      const inView = new Set(view.frameIds);
+      omittedFrameIds = store
+        .list()
+        .filter((f) => f.kind === "turn" && !inView.has(f.id))
+        .map((f) => f.id);
     } catch (err) {
       // A persistence failure leaves in-memory state intact but unsaved. Surface it
       // cleanly rather than as a raw 500 with a stack trace.
@@ -136,6 +153,8 @@ export function startProxy(opts: {
         inbound: { headers: redactHeaders(req.headers), rawBody },
         outboundBody: composed.body,
         wireWarnings: composed.wireWarnings,
+        viewFrameIds: view.frameIds,
+        omittedFrameIds,
         upstreamStatus: null,
         upstreamError: String(err),
       });
@@ -150,6 +169,11 @@ export function startProxy(opts: {
       inbound: { headers: redactHeaders(req.headers), rawBody },
       outboundBody: composed.body,
       wireWarnings: composed.wireWarnings,
+      // §11 Phase 2.7 live-validation surface: the frames this request's view
+      // emitted vs the stored frames the request didn't carry (fork-only frames +
+      // tombstones not resent) — the fork-isolation diff, visible per request.
+      viewFrameIds: view.frameIds,
+      omittedFrameIds,
       upstreamStatus,
       upstreamErrorBody,
     });
@@ -198,10 +222,40 @@ export function startProxy(opts: {
       }
 
       if (path === "/control/compose") {
-        const c = store.compose();
+        // §11 Phase 2.7 semantics: the DEFAULT stays the full-store compose (stable
+        // for tooling/scripts) with a viewNote stating fork-only frames may be
+        // present that the next emission will exclude. ?view=last composes the last
+        // emitted ("attempted outbound") view against the CURRENT store — a
+        // view-scoped current representation, NOT a byte snapshot of the prior
+        // outbound request (captures/edits that landed since are reflected).
+        const viewParam = url.searchParams.get("view");
+        const out: Record<string, unknown> = { conv: conv.id };
+        let c;
+        if (viewParam === "last") {
+          const view = store.lastView();
+          if (!view) {
+            return json(
+              {
+                error:
+                  `no emitted view for conversation ${conv.id} — views are derived ` +
+                  `per request and never persisted (nothing emitted since startup)`,
+              },
+              404,
+            );
+          }
+          c = store.compose(view);
+          out.view = "last";
+          out.viewFrameIds = view.frameIds;
+        } else if (viewParam !== null) {
+          return json({ error: `unknown view '${viewParam}' (supported: last)` }, 400);
+        } else {
+          c = store.compose();
+          out.viewNote =
+            "full-store compose: fork-only frames may be present that the next " +
+            "emission will exclude; use ?view=last for the last emitted view";
+        }
         const wantDump = url.searchParams.has("dump");
         const wantHash = url.searchParams.has("hashHead");
-        const out: Record<string, unknown> = { conv: conv.id };
         if (wantDump || (!wantDump && !wantHash)) out.body = c.body;
         if (wantHash || (!wantDump && !wantHash)) {
           out.headHash = c.headHash;

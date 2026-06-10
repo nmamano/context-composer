@@ -18,6 +18,7 @@ import type {
   DecomposedFrame,
   Frame,
   RequestEnvelope,
+  RequestView,
   WireMessage,
 } from "./types.ts";
 import { decompose } from "./decompose.ts";
@@ -43,6 +44,13 @@ export interface FrameSummary {
   tokenEstimate: number;
   deleted: boolean;
   messageCount: number;
+  /** §11 Phase 2.7 — was this frame in the LAST emitted view? `false` flags a
+   *  fork-only frame (stored, visible, deletable — but the next emission of the
+   *  thread that didn't carry it will exclude it). `null` when not applicable:
+   *  the preamble (head representation, never view membership) or when no view
+   *  has been emitted yet (fresh store / post-restart — views are derived per
+   *  request and never persisted). */
+  inLastView: boolean | null;
 }
 
 /** Result of a `revert` — a clear error (Phase 2 refuses ambiguous reverts) or the new
@@ -62,6 +70,12 @@ export class FrameStore {
   private commits = new CommitGraph();
   private events = new EventLog();
   private persistence: Persistence | null;
+  /** §11 Phase 2.7 — the last view COMPOSED FOR THE WIRE on the owned path (the
+   *  "attempted outbound" view: recorded right after compose, before forward, so a
+   *  request that 502s upstream still counts — deterministic and matched 1:1 by the
+   *  wiretap entry). NON-PERSISTENT by design: views are derived per request;
+   *  after a restart this is null until the next owned request. */
+  private lastEmittedView: RequestView | null = null;
 
   /** @param persistence durable backing store; `null` = pure in-memory (Phase 1). */
   constructor(persistence: Persistence | null = null) {
@@ -75,8 +89,15 @@ export class FrameStore {
    *  timeline is complete — a tool_result/assistant continuation arriving via the unaware
    *  resend is visible), persists. A capture is NOT a commit — it never lands in `history`
    *  or in a frame's `provenance`. Identical resends (incl. a relocated `cache_control`
-   *  marker) produce no event. */
-  ingest(body: Record<string, unknown>): void {
+   *  marker) produce no event.
+   *
+   *  Returns the REQUEST VIEW (§11 Phase 2.7): the turn frames this request matched
+   *  or appended, in incoming order, tombstone matches included — what compose
+   *  emits for THIS request, and where its response capture must land. The view's
+   *  createdIds/grownIds are TURN-ONLY and deliberately decoupled from the capture
+   *  event's affected set below (which may include the preamble — head
+   *  representation, never view membership). */
+  ingest(body: Record<string, unknown>): RequestView {
     const { system, tools, injectedSystem, envelope, frames } = decompose(body);
     this.envelope = envelope;
 
@@ -119,7 +140,7 @@ export class FrameStore {
         estimateTokens(system) + estimateTokens(tools);
     }
 
-    reconcile(this.frames, frames, {
+    const viewFrameIds = reconcile(this.frames, frames, {
       makeFrame: (inc) => {
         const f = this.makeFrame(inc);
         created.push(f);
@@ -144,6 +165,9 @@ export class FrameStore {
     // One capture event per ingest that created OR grew frames; stamp each NEW frame with
     // its origin event so the timeline can explain where it came from. No change → no
     // event (the unaware agent's identical resends don't flood the timeline).
+    // NOTE: this affected set may include the PREAMBLE (created/grown head) — that is
+    // correct for the timeline and must stay; the RequestView below filters to turn
+    // frames separately. Do not unify the two.
     const affected = [...created.map((f) => f.id), ...grown];
     if (affected.length > 0) {
       const event = this.recordEvent("capture", affected);
@@ -151,6 +175,29 @@ export class FrameStore {
     }
 
     this.persist();
+
+    // Derive the request view (§11 Phase 2.7). Membership + order come from THIS
+    // request (reconcile's mapping); the store supplies each member's representation
+    // at compose time. openFrameId is the last NON-DELETED frame OF THE VIEW — the
+    // capture target — never the store tail (a fork's reply must not land on, or
+    // steal, a main-thread frame).
+    const byId = new Map(this.frames.map((f) => [f.id, f]));
+    let openFrameId: string | null = null;
+    for (let i = viewFrameIds.length - 1; i >= 0; i--) {
+      const f = byId.get(viewFrameIds[i]!);
+      if (f && !f.deleted) {
+        openFrameId = f.id;
+        break;
+      }
+    }
+    return {
+      frameIds: viewFrameIds,
+      openFrameId,
+      // Turn-only: `created`/`grown` above feed the capture event and may include
+      // the preamble; the view never does (byId holds turn frames only).
+      createdIds: created.filter((f) => f.kind === "turn").map((f) => f.id),
+      grownIds: grown.filter((id) => byId.has(id)),
+    };
   }
 
   /** Normalized content signature of a frame (cache_control stripped, deterministic
@@ -189,13 +236,47 @@ export class FrameStore {
     };
   }
 
-  compose(): ComposeResult {
-    return compose(this.preamble, this.frames, this.envelope);
+  /** Compose the wire body. With a view (§11 Phase 2.7): emit exactly the view's
+   *  frames (tombstones honored — deleted wins); the owned /v1/messages path always
+   *  passes the current request's view. Without a view: the full-store union —
+   *  preserved for control/debug surfaces only. PURE — no side effects; recording
+   *  the emitted view is the caller's explicit step (noteEmittedView). */
+  compose(view?: RequestView): ComposeResult {
+    return compose(this.preamble, this.frames, this.envelope, view);
+  }
+
+  /** Record the view just composed for the wire (the "attempted outbound" view —
+   *  see the field doc; recorded even if the upstream forward subsequently fails).
+   *  Arrays are cloned so later accidental mutation by the caller cannot rewrite
+   *  history. Non-persistent; never part of the snapshot. */
+  noteEmittedView(view: RequestView): void {
+    this.lastEmittedView = {
+      frameIds: [...view.frameIds],
+      openFrameId: view.openFrameId,
+      createdIds: [...view.createdIds],
+      grownIds: [...view.grownIds],
+    };
+  }
+
+  /** The last emitted ("attempted outbound") view, or null if none since startup —
+   *  views are derived per request and never persisted (§11 Phase 2.7). Returns a
+   *  clone (matching noteEmittedView's defensive-copy intent) so library/test
+   *  callers can't accidentally rewrite the last-view annotation. */
+  lastView(): RequestView | null {
+    if (!this.lastEmittedView) return null;
+    return {
+      frameIds: [...this.lastEmittedView.frameIds],
+      openFrameId: this.lastEmittedView.openFrameId,
+      createdIds: [...this.lastEmittedView.createdIds],
+      grownIds: [...this.lastEmittedView.grownIds],
+    };
   }
 
   /** The frame currently awaiting an assistant response (last non-deleted turn
-   *  frame). Captured at forward time so the capture has an EXPLICIT target and can't
-   *  attach to whatever frame happens to be last when the async capture resolves. */
+   *  frame OF THE STORE). Phase 2.7: the owned path now targets the VIEW's
+   *  openFrameId instead (RequestView.openFrameId), so a fork's capture lands on
+   *  the fork's own open frame; this store-tail variant remains for tests/library
+   *  callers that operate single-conversation, where the two coincide. */
   openFrameId(): string | null {
     for (let i = this.frames.length - 1; i >= 0; i--) {
       if (!this.frames[i]!.deleted) return this.frames[i]!.id;
@@ -232,6 +313,14 @@ export class FrameStore {
   }
 
   private summarize(f: Frame): FrameSummary {
+    // Fork-only annotation (§11 Phase 2.7): a turn frame absent from the last
+    // emitted view is stored-but-not-sent on that thread — surfaced so users
+    // understand why side-query frames exist before deleting them. null = not
+    // applicable (preamble, or no view emitted yet).
+    const inLastView =
+      f.kind === "turn" && this.lastEmittedView
+        ? this.lastEmittedView.frameIds.includes(f.id)
+        : null;
     return {
       id: f.id,
       kind: f.kind,
@@ -240,6 +329,7 @@ export class FrameStore {
       tokenEstimate: f.tokenEstimate,
       deleted: f.deleted,
       messageCount: f.messages.length,
+      inLastView,
     };
   }
 

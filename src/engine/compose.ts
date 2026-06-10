@@ -1,9 +1,12 @@
 // Composition (design.md §5.F) + the composer's two cache duties (§9).
 //
-// compose() walks the authoritative frame list in order, OMITS deleted frames, and
-// reassembles the exact request body the next send will use: preserved runtime
-// knobs (envelope) + head (system/tools + injected system) + messages. It is the
-// inspection surface every later phase relies on (`ctx compose --dump`/`--hash-head`).
+// compose() reassembles the exact request body the next send will use: preserved
+// runtime knobs (envelope) + head (system/tools + injected system) + messages.
+// Since §11 Phase 2.7 the emitted turn frames are scoped by the optional
+// RequestView — the owned /v1/messages path always composes the CURRENT REQUEST'S
+// view (fork isolation); the full-store walk remains for control/debug surfaces.
+// Deleted frames are omitted either way. It is the inspection surface every later
+// phase relies on (`ctx compose --dump`/`--hash-head`).
 //
 // Cache duties:
 //  (a) deterministic bytes — via canonicalStringify, so unchanged frames serialize
@@ -22,7 +25,7 @@
 // head and AFTER the breakpoint — they may be volatile (retrieved memory), so they sit
 // outside the cached prefix and outside the head hash.
 
-import type { Block, Frame, RequestEnvelope } from "./types.ts";
+import type { Block, Frame, RequestEnvelope, RequestView } from "./types.ts";
 import { canonicalStringify, sha256, stripCacheControlDeep } from "./canonical.ts";
 import { detectWireIssues, type WireWarning } from "./wire-integrity.ts";
 
@@ -50,12 +53,29 @@ export function compose(
   preamble: Frame | null,
   frames: Frame[],
   envelope: RequestEnvelope,
+  view?: RequestView,
 ): ComposeResult {
+  // Emission scope (§11 Phase 2.7). With a view, the REQUEST supplies membership +
+  // baseline order (the frames its reconcile matched or appended) and the STORE
+  // supplies each member's current representation; tombstones in the view are
+  // matched-but-omitted (deleted wins). Without a view — control/debug surfaces
+  // only — emit the full-store union as before. Emission stays a PURE function of
+  // (view, store) so the long-term rule slots in without rework: future ops
+  // (edit/compact/strip/merge/split) transform a member's representation, and
+  // future user-commit-originated frames (add/insert/reorder) extend membership
+  // beyond what the request carried.
+  const byId = new Map(frames.map((f) => [f.id, f]));
+  const emitted = view
+    ? view.frameIds
+        .map((id) => byId.get(id))
+        // Defensive: view ids always resolve today (frames are tombstoned, never
+        // removed) — the filter simply makes a future removal op fail safe.
+        .filter((f): f is Frame => f !== undefined && !f.deleted)
+    : frames.filter((f) => !f.deleted);
+
   // Wire-integrity (§11 Phase 2.6): DETECT facially-suspect blocks (e.g. empty
   // thinking husks) and surface them — never alter the wire. Compose is faithful.
-  const messages = stripCacheControlDeep(
-    frames.filter((f) => !f.deleted).flatMap((f) => f.messages),
-  );
+  const messages = stripCacheControlDeep(emitted.flatMap((f) => f.messages));
   const wireWarnings = detectWireIssues(messages);
 
   const headPresent = !!preamble && !preamble.deleted;

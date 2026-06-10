@@ -7,6 +7,7 @@
 //   bun run src/cli/ctx.ts delete t1 t2
 //   bun run src/cli/ctx.ts compose --dump
 //   bun run src/cli/ctx.ts compose --hash-head
+//   bun run src/cli/ctx.ts compose --view-last   (§11 Phase 2.7: the last emitted view)
 //   bun run src/cli/ctx.ts history             (commit log — what you DID to the context)
 //   bun run src/cli/ctx.ts timeline            (full audit log — incl. captures)
 //   bun run src/cli/ctx.ts revert [<commit>]   (Phase 2 versioning verbs)
@@ -57,20 +58,30 @@ async function cmdList(args: string[]): Promise<void> {
       tokenEstimate: number;
       deleted: boolean;
       messageCount: number;
+      inLastView: boolean | null;
     }>;
   };
   const visible = frames.filter((f) => showAll || !f.deleted);
   const hiddenDeleted = frames.length - visible.length;
 
   console.log(`(conversation ${conv} — see \`ctx conversations\`; target another with --conv <id>)`);
+  let sawForkOnly = false;
   for (const f of visible) {
-    const flag = f.deleted ? " [deleted]" : "";
+    const flags =
+      (f.deleted ? " [deleted]" : "") +
+      (f.inLastView === false ? " [fork-only]" : "");
+    if (f.inLastView === false) sawForkOnly = true;
     console.log(
-      `${f.id.padEnd(4)} ${f.kind.padEnd(8)} ${String(f.tokenEstimate).padStart(6)}tok  ${f.title}${flag}`,
+      `${f.id.padEnd(4)} ${f.kind.padEnd(8)} ${String(f.tokenEstimate).padStart(6)}tok  ${f.title}${flags}`,
     );
   }
   if (hiddenDeleted > 0 && !showAll) {
     console.log(`(${hiddenDeleted} deleted frame(s) hidden — use --all)`);
+  }
+  if (sawForkOnly) {
+    console.log(
+      "(fork-only = not in the last emitted view: stored but not sent — a side query forked it in; delete or just leave it)",
+    );
   }
 }
 
@@ -97,7 +108,10 @@ async function cmdDelete(args: string[]): Promise<void> {
 async function cmdCompose(args: string[]): Promise<void> {
   const dump = args.includes("--dump");
   const hashHead = args.includes("--hash-head");
-  const qs = [dump ? "dump" : "", hashHead ? "hashHead" : ""]
+  // §11 Phase 2.7: --view-last composes the last emitted view (what the wire
+  // actually got scoped to), vs the default full-store compose (debug surface).
+  const viewLast = args.includes("--view-last");
+  const qs = [dump ? "dump" : "", hashHead ? "hashHead" : "", viewLast ? "view=last" : ""]
     .filter(Boolean)
     .join("&");
   const result = await get(`/control/compose${qs ? `?${qs}` : ""}`);
@@ -153,6 +167,7 @@ async function cmdConversations(_args: string[]): Promise<void> {
       id: string;
       turnFrames: number;
       totalTurnFrames: number;
+      forkFrames: number;
       tokenEstimate: number;
       lastIngestAt: string | null;
       active: boolean;
@@ -169,9 +184,10 @@ async function cmdConversations(_args: string[]): Promise<void> {
       c.turnFrames === c.totalTurnFrames
         ? `${c.turnFrames} turn-frames`
         : `${c.turnFrames} live / ${c.totalTurnFrames} total turn-frames`;
+    const fork = c.forkFrames > 0 ? `  (${c.forkFrames} fork-only — see \`ctx list\`)` : "";
     const warn = c.suspicious ? `  ⚠ ${c.suspicious.reason} (${c.suspicious.frameCount} frames at first contact)` : "";
     console.log(
-      `${mark} ${c.id.padEnd(4)} ${turns.padEnd(34)} ${String(c.tokenEstimate).padStart(7)}tok  last ingest ${c.lastIngestAt ?? "(never)"}${warn}`,
+      `${mark} ${c.id.padEnd(4)} ${turns.padEnd(34)} ${String(c.tokenEstimate).padStart(7)}tok  last ingest ${c.lastIngestAt ?? "(never)"}${fork}${warn}`,
     );
   }
   console.log("(* = active — the conversation store-scoped verbs target; override with --conv <id>)");
@@ -218,7 +234,7 @@ async function main(): Promise<void> {
       return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }

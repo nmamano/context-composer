@@ -79,6 +79,11 @@ export interface ConversationSummary {
   /** ALL turn frames including tombstones — the activity measure. Deletion is
    *  curation, not abandonment: it must never demote the curated conversation. */
   totalTurnFrames: number;
+  /** §11 Phase 2.7 — live turn frames NOT in this conversation's last emitted view
+   *  (fork-only: stored/visible/deletable, but the next emission of the thread that
+   *  didn't carry them excludes them). 0 when no view has been emitted yet — views
+   *  are derived per request and never persisted. */
+  forkFrames: number;
   tokenEstimate: number;
   lastIngestAt: string | null;
   active: boolean;
@@ -216,6 +221,7 @@ export class ConversationRegistry {
       key: r.key,
       turnFrames: this.turnFrames(r),
       totalTurnFrames: this.totalTurnFrames(r),
+      forkFrames: this.forkFrames(r),
       tokenEstimate: this.tokens(r),
       lastIngestAt: r.lastIngestAt,
       active: r === active,
@@ -225,6 +231,16 @@ export class ConversationRegistry {
 
   private turnFrames(rec: ConvRecord): number {
     return rec.store.list().filter((f) => f.kind === "turn" && !f.deleted).length;
+  }
+
+  /** Live turn frames outside the conversation's last emitted view (§11 Phase 2.7)
+   *  — the fork-only count surfaced by `ctx conversations`. */
+  private forkFrames(rec: ConvRecord): number {
+    if (!rec.store.lastView()) return 0; // no view yet — annotation not applicable
+    return rec.store
+      .list()
+      .filter((f) => f.kind === "turn" && !f.deleted && f.inLastView === false)
+      .length;
   }
 
   private totalTurnFrames(rec: ConvRecord): number {

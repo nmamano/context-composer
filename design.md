@@ -887,7 +887,17 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   resent later: tombstone matched in view, omitted from outbound; (3) a fork capture
   containing deleted content stays on the fork view and never rides the next main
   compose; (4) head-only side-instruction variant if observed live.
-- **Status:** design review converged; implementation not started.
+- **Status:** **Built and live-validated (2026-06-10).** All gates green (tsc, unit +
+  integration tests incl. `test/fork-isolation.test.ts`, demo, live-e2e, live-phase2).
+  Real-TUI smoke: the TUI fired genuine `[SUGGESTION MODE` side queries unprompted —
+  after `ctx delete` of the secret frame, the next main turn emitted view
+  `[t1☠,t2,t4]` with the suggestion frame in `omittedFrameIds`, the live model
+  answered NONE while the unaware inbound still carried the secret, and the
+  suggestion feature kept working on its own view. Restart confirmed views are
+  derived/non-persistent (`?view=last` → 404, `inLastView` → null). The head-only
+  side-instruction variant (acceptance 4) was NOT observed live and remains
+  deliberately untested; the adjacent capture-targeting + self-heal mechanics are
+  pinned by tests.
 
 ### Phase 3 — Operation breadth (a sequence of vertical op slices)
 

@@ -82,6 +82,36 @@ export interface Frame {
  *  verbatim — full ownership of the prompt must not mean dropping these. */
 export type RequestEnvelope = Record<string, unknown>;
 
+/**
+ * The per-request view (design.md §11 Phase 2.7 — fork isolation): the turn frames
+ * THIS request's reconcile matched or appended, in incoming order, tombstone matches
+ * INCLUDED. Compose-from-view emits exactly these frames minus tombstones (deleted
+ * wins), so frames another request forked into the store — suggestion/recap side
+ * queries that share the conversation key — never ride along on this wire body.
+ *
+ * "Scope emission, not matching": reconcile still matches against the FULL store
+ * (tombstones included), so the delete-then-unaware-resend story is unchanged; the
+ * view only scopes what compose EMITS. The request supplies MEMBERSHIP + baseline
+ * order; the store supplies each member's REPRESENTATION (future ops transform it).
+ * Views are derived per request and never persisted.
+ */
+export interface RequestView {
+  /** Ordered: one id per incoming turn frame — the matched existing frame
+   *  (tombstone matches included) or the freshly appended one. */
+  frameIds: string[];
+  /** The view's capture target: the last NON-DELETED turn frame OF THE VIEW — not
+   *  the store tail. A fork's reply must land on the fork's own open frame, never
+   *  on whatever frame happens to be last in the store. */
+  openFrameId: string | null;
+  /** Turn frames this request created. Deliberately decoupled from ingest()'s
+   *  capture-EVENT bookkeeping, whose affected set may include the preamble — the
+   *  preamble is head representation, never view membership. */
+  createdIds: string[];
+  /** Turn frames whose content materially grew this request (turn-only; same
+   *  decoupling from the event's affected set as createdIds). */
+  grownIds: string[];
+}
+
 /** A frame as carved out of one incoming request by decompose(). */
 export interface DecomposedFrame {
   anchorFp: string;
