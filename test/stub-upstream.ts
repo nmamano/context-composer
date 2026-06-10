@@ -3,6 +3,10 @@
 // forwarded after rewriting) and replies with a programmed SSE stream from a queue.
 
 export interface RespSpec {
+  /** Emit a thinking block: start event, then a thinking_delta per non-empty `text`,
+   *  then a signature_delta per non-empty `signature`. A start with NO deltas (text:""
+   *  and no signature) reproduces the real husk-producing stream shape (§11 Phase 2.6). */
+  thinking?: { text?: string; signature?: string };
   text?: string;
   toolUse?: { id: string; name: string; input: unknown };
   stopReason: string;
@@ -26,6 +30,29 @@ export function makeSSE(spec: RespSpec): string {
     },
   });
   let idx = 0;
+  if (spec.thinking) {
+    out += ev({
+      type: "content_block_start",
+      index: idx,
+      content_block: { type: "thinking", thinking: "" },
+    });
+    if (spec.thinking.text) {
+      out += ev({
+        type: "content_block_delta",
+        index: idx,
+        delta: { type: "thinking_delta", thinking: spec.thinking.text },
+      });
+    }
+    if (spec.thinking.signature) {
+      out += ev({
+        type: "content_block_delta",
+        index: idx,
+        delta: { type: "signature_delta", signature: spec.thinking.signature },
+      });
+    }
+    out += ev({ type: "content_block_stop", index: idx });
+    idx++;
+  }
   if (spec.text !== undefined) {
     out += ev({ type: "content_block_start", index: idx, content_block: { type: "text", text: "" } });
     out += ev({ type: "content_block_delta", index: idx, delta: { type: "text_delta", text: spec.text } });

@@ -1,23 +1,31 @@
 // The proxy daemon — the rendered-context boundary (design.md Appendix B) AND the
 // control API the CLI drives. One Bun.serve, routed by path:
-//   POST /v1/messages   → intercept: ingest → compose → forward → capture
-//   /control/*          → list / show / delete / compose for the `ctx` CLI
+//   POST /v1/messages   → intercept: route to conversation → ingest → compose →
+//                         forward → capture (+ wiretap evidence, §11 Phase 2.6)
+//   /control/*          → list / show / delete / compose / conversations for `ctx`
 //   (anything else)     → transparent passthrough to the real upstream (design.md §11,
 //                         Phase 2.5): a dumb pipe that bypasses the engine entirely
 //
-// Both surfaces share ONE in-memory FrameStore in this process: the CLI mutates the
-// exact state the proxy composes from on the next request (locked decision — no
-// disk-only coordination).
+// A real interactive agent multiplexes SEVERAL conversations over /v1/messages (main
+// thread + title/recap/quota side queries), so the engine state is a
+// ConversationRegistry — one FrameStore per conversation (§11 Phase 2.6). The CLI mutates the
+// exact store the proxy composes from on the next request (locked decision — no
+// disk-only coordination); by default it targets the ACTIVE conversation, with
+// ?conv=<id> to override.
 
-import { PROXY_PORT, STORE_PATH } from "../config.ts";
-import { FrameStore } from "../engine/state.ts";
-import { JsonFileStore } from "../engine/store.ts";
+import { PROXY_PORT, STORE_PATH, WIRETAP_PATH } from "../config.ts";
+import { ConversationRegistry } from "../engine/registry.ts";
+import type { FrameStore } from "../engine/state.ts";
 import type { Commit } from "../engine/commit-graph.ts";
 import type { ContextEvent } from "../engine/event-log.ts";
 import { forward, passthrough } from "./forward.ts";
+import { redactHeaders, Wiretap } from "./wiretap.ts";
 
 export interface ProxyHandle {
-  store: FrameStore;
+  /** The ACTIVE conversation's store (the curated main thread) — the single-store
+   *  Phase ≤2.5 surface, preserved for tests and library callers. */
+  readonly store: FrameStore;
+  registry: ConversationRegistry;
   port: number;
   stop: () => void;
 }
@@ -58,21 +66,25 @@ function publicEvent(e: ContextEvent) {
 export function startProxy(opts: {
   port?: number;
   upstreamBaseUrl?: string;
-  /** Path to the durable JSON store. Omit for pure in-memory state (the Phase 1
+  /** Path to the durable JSON registry. Omit for pure in-memory state (the Phase 1
    *  behavior the tests rely on); the daemon entrypoint passes a real path. */
   storePath?: string;
+  /** JSONL raw-evidence log (§11 Phase 2.6). Omit to disable (tests default off; daemon on). */
+  wiretapPath?: string;
 } = {}): ProxyHandle {
-  const store = new FrameStore(
-    opts.storePath ? new JsonFileStore(opts.storePath) : null,
-  );
+  const registry = new ConversationRegistry(opts.storePath ?? null);
+  const wiretap = opts.wiretapPath ? new Wiretap(opts.wiretapPath) : null;
   // Tracks the in-flight response capture so control reads observe a consistent
   // state (e.g. `ctx list` right after a send reflects the captured assistant).
   let lastCapture: Promise<void> = Promise.resolve();
 
   async function handleMessages(req: Request): Promise<Response> {
+    // Keep the RAW inbound bytes: the wiretap's purpose is byte-exact replay evidence
+    // ("would the original have passed?"), so we log what arrived, not our re-parse.
+    const rawBody = await req.text();
     let body: Record<string, unknown>;
     try {
-      body = (await req.json()) as Record<string, unknown>;
+      body = JSON.parse(rawBody) as Record<string, unknown>;
     } catch {
       return json({ error: "invalid JSON body" }, 400);
     }
@@ -81,8 +93,11 @@ export function startProxy(opts: {
     // so reconcile sees a settled state. NOTE: this is a serialization CONVENTION for
     // the single-agent model (one in-flight /v1/messages at a time, with `ctx` calls
     // interleaved between turns), NOT a lock. Two concurrent /v1/messages would need a
-    // real queue — out of scope for Phase 1's single wrapped agent.
+    // real queue — out of scope for the single wrapped agent.
     await lastCapture;
+
+    const conv = registry.route(body);
+    const store = conv.store;
 
     let composed;
     let targetId;
@@ -98,6 +113,15 @@ export function startProxy(opts: {
       return json({ error: "failed to ingest/persist request", detail: String(err) }, 500);
     }
 
+    if (composed.wireWarnings.length > 0) {
+      console.error(
+        `[context-composer] wire warnings (conv ${conv.id}, forwarding faithfully): ` +
+          composed.wireWarnings
+            .map((w) => `${w.issue}@msg${w.messageIndex}.${w.blockIndex}${w.signed ? "(signed)" : "(UNSIGNED)"}`)
+            .join(" "),
+      );
+    }
+
     let forwarded;
     try {
       forwarded = await forward(composed.body, req.headers, opts.upstreamBaseUrl);
@@ -105,9 +129,30 @@ export function startProxy(opts: {
       // Upstream is unreachable. The just-ingested frame stays in state with no
       // captured assistant; it self-heals on the agent's resend (reconcile re-matches
       // by fingerprint), so no duplication. Return a clean error rather than a raw 500.
+      wiretap?.record({
+        ts: new Date().toISOString(),
+        kind: "messages",
+        conv: conv.id,
+        inbound: { headers: redactHeaders(req.headers), rawBody },
+        outboundBody: composed.body,
+        wireWarnings: composed.wireWarnings,
+        upstreamStatus: null,
+        upstreamError: String(err),
+      });
       return json({ error: "upstream request failed", detail: String(err) }, 502);
     }
-    const { response, capture } = forwarded;
+    const { response, capture, upstreamStatus, upstreamErrorBody } = forwarded;
+
+    wiretap?.record({
+      ts: new Date().toISOString(),
+      kind: "messages",
+      conv: conv.id,
+      inbound: { headers: redactHeaders(req.headers), rawBody },
+      outboundBody: composed.body,
+      wireWarnings: composed.wireWarnings,
+      upstreamStatus,
+      upstreamErrorBody,
+    });
 
     lastCapture = capture
       .then((c) => {
@@ -125,55 +170,66 @@ export function startProxy(opts: {
     const path = url.pathname;
 
     try {
-    if (path === "/control/list") return json({ frames: store.list() });
-
-    if (path === "/control/show") {
-      const id = url.searchParams.get("id");
-      if (!id) return json({ error: "missing id" }, 400);
-      const frame = store.show(id);
-      return frame ? json(frame) : json({ error: `no frame ${id}` }, 404);
-    }
-
-    if (path === "/control/delete" && req.method === "POST") {
-      const parsed = (await req.json().catch(() => null)) as
-        | { ids?: string[] }
-        | null;
-      const ids = parsed?.ids ?? [];
-      return json({ deleted: store.delete(ids) });
-    }
-
-    if (path === "/control/compose") {
-      const c = store.compose();
-      const wantDump = url.searchParams.has("dump");
-      const wantHash = url.searchParams.has("hashHead");
-      const out: Record<string, unknown> = {};
-      if (wantDump || (!wantDump && !wantHash)) out.body = c.body;
-      if (wantHash || (!wantDump && !wantHash)) {
-        out.headHash = c.headHash;
-        out.hasCacheBreakpoint = c.hasCacheBreakpoint;
+      if (path === "/control/conversations") {
+        return json({ conversations: registry.summaries() });
       }
-      return json(out);
-    }
 
-    if (path === "/control/history") {
-      return json({ commits: store.history().map(publicCommit) });
-    }
+      // Every store-scoped route targets the ACTIVE conversation unless ?conv=<id>.
+      const convId = url.searchParams.get("conv");
+      const conv = registry.activeRecord(convId);
+      if (!conv) return json({ error: `no conversation ${convId}` }, 404);
+      const store = conv.store;
 
-    if (path === "/control/timeline") {
-      return json({ events: store.timeline().map(publicEvent) });
-    }
+      if (path === "/control/list") return json({ conv: conv.id, frames: store.list() });
 
-    if (path === "/control/revert" && req.method === "POST") {
-      const parsed = (await req.json().catch(() => null)) as
-        | { commit?: string }
-        | null;
-      const result = store.revert(parsed?.commit);
-      return result.ok
-        ? json({ reverted: publicCommit(result.commit) })
-        : json({ error: result.error }, 400);
-    }
+      if (path === "/control/show") {
+        const id = url.searchParams.get("id");
+        if (!id) return json({ error: "missing id" }, 400);
+        const frame = store.show(id);
+        return frame ? json(frame) : json({ error: `no frame ${id}` }, 404);
+      }
 
-    return json({ error: `unknown control route ${path}` }, 404);
+      if (path === "/control/delete" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { ids?: string[] }
+          | null;
+        const ids = parsed?.ids ?? [];
+        return json({ conv: conv.id, deleted: store.delete(ids) });
+      }
+
+      if (path === "/control/compose") {
+        const c = store.compose();
+        const wantDump = url.searchParams.has("dump");
+        const wantHash = url.searchParams.has("hashHead");
+        const out: Record<string, unknown> = { conv: conv.id };
+        if (wantDump || (!wantDump && !wantHash)) out.body = c.body;
+        if (wantHash || (!wantDump && !wantHash)) {
+          out.headHash = c.headHash;
+          out.hasCacheBreakpoint = c.hasCacheBreakpoint;
+        }
+        out.wireWarnings = c.wireWarnings; // always surfaced (§11 Phase 2.6)
+        return json(out);
+      }
+
+      if (path === "/control/history") {
+        return json({ conv: conv.id, commits: store.history().map(publicCommit) });
+      }
+
+      if (path === "/control/timeline") {
+        return json({ conv: conv.id, events: store.timeline().map(publicEvent) });
+      }
+
+      if (path === "/control/revert" && req.method === "POST") {
+        const parsed = (await req.json().catch(() => null)) as
+          | { commit?: string }
+          | null;
+        const result = store.revert(parsed?.commit);
+        return result.ok
+          ? json({ conv: conv.id, reverted: publicCommit(result.commit) })
+          : json({ error: result.error }, 400);
+      }
+
+      return json({ error: `unknown control route ${path}` }, 404);
     } catch (err) {
       // A mutating control op (delete/revert) failed to persist. In-memory state is
       // intact but unsaved; report it cleanly instead of as a raw 500.
@@ -194,13 +250,26 @@ export function startProxy(opts: {
         return handleControl(req, url); // local control API (its own 404 for unknown routes)
       }
       // Everything else is NOT ours: pipe it to the real upstream untouched and stream the
-      // response back (Phase 2.5). No ingest, no compose, no FrameStore/commit-log touch.
-      return passthrough(req, opts.upstreamBaseUrl);
+      // response back (Phase 2.5). No ingest, no compose, no engine touch. The wiretap
+      // notes method/path/status only (no bodies — not ours to argue about).
+      return passthrough(req, opts.upstreamBaseUrl).then((res) => {
+        wiretap?.record({
+          ts: new Date().toISOString(),
+          kind: "passthrough",
+          method: req.method,
+          path: url.pathname + url.search,
+          status: res.status,
+        });
+        return res;
+      });
     },
   });
 
   return {
-    store,
+    get store() {
+      return registry.activeStore();
+    },
+    registry,
     port: server.port ?? opts.port ?? PROXY_PORT,
     stop: () => server.stop(true),
   };
@@ -208,13 +277,18 @@ export function startProxy(opts: {
 
 // Run as a daemon when invoked directly: `bun run src/proxy/server.ts`.
 // The daemon persists to CC_STORE_PATH (default ./.ctx-store.json) so a restart resumes
-// the frame state + commit graph.
+// the conversation registry + commit graphs, and taps raw wire evidence to
+// CC_WIRETAP_PATH (default ./.ctx-wiretap.jsonl).
 if (import.meta.main) {
-  const handle = startProxy({ storePath: STORE_PATH });
+  const handle = startProxy({
+    storePath: STORE_PATH,
+    wiretapPath: WIRETAP_PATH,
+  });
   console.error(
     `[context-composer] proxy + control API on http://localhost:${handle.port}\n` +
       `  point the wrapped agent at it:  ANTHROPIC_BASE_URL=http://localhost:${handle.port}\n` +
-      `  durable store:                  ${STORE_PATH}\n` +
+      `  durable store (registry):       ${STORE_PATH}\n` +
+      `  wiretap (raw wire evidence):    ${WIRETAP_PATH}\n` +
       `  drive frames with:              bun run src/cli/ctx.ts list`,
   );
 }

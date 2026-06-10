@@ -24,6 +24,7 @@
 
 import type { Block, Frame, RequestEnvelope } from "./types.ts";
 import { canonicalStringify, sha256, stripCacheControlDeep } from "./canonical.ts";
+import { detectWireIssues, type WireWarning } from "./wire-integrity.ts";
 
 export interface ComposeResult {
   body: Record<string, unknown>;
@@ -32,6 +33,10 @@ export interface ComposeResult {
   headHash: string;
   /** Whether the single owned cache_control breakpoint was placed. */
   hasCacheBreakpoint: boolean;
+  /** Facially suspect blocks found in the composed messages — always detected and
+   *  surfaced (control API / wiretap / stderr), never silently acted on (§11
+   *  Phase 2.6: compose is faithful). */
+  wireWarnings: WireWarning[];
 }
 
 function toSystemBlocks(system: unknown): Block[] {
@@ -46,9 +51,12 @@ export function compose(
   frames: Frame[],
   envelope: RequestEnvelope,
 ): ComposeResult {
+  // Wire-integrity (§11 Phase 2.6): DETECT facially-suspect blocks (e.g. empty
+  // thinking husks) and surface them — never alter the wire. Compose is faithful.
   const messages = stripCacheControlDeep(
     frames.filter((f) => !f.deleted).flatMap((f) => f.messages),
   );
+  const wireWarnings = detectWireIssues(messages);
 
   const headPresent = !!preamble && !preamble.deleted;
   const baseSystem = stripCacheControlDeep(
@@ -92,5 +100,5 @@ export function compose(
     }),
   );
 
-  return { body, headHash, hasCacheBreakpoint: placed };
+  return { body, headHash, hasCacheBreakpoint: placed, wireWarnings };
 }

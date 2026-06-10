@@ -736,13 +736,158 @@ build the UI"). Tech stack is TypeScript end-to-end on Bun to match the Isomux c
   **response** is streamed, never buffered (SSE passes through live), while small non-owned
   **request** bodies (e.g. `count_tokens`) are buffered for simplicity — byte-exact either
   way. We own/rewrite exactly `POST /v1/messages`; everything else is a dumb pipe.
-- **Status:** **Built.** Catch-all transparent forward landed in `proxy/forward.ts`
-  (`passthrough`) + `proxy/server.ts` (terminal 404 → passthrough); integration test
-  `test/passthrough.test.ts` covers byte-exact forwarding, SSE streaming, engine-bypass, and
-  the route-order invariants. Automated gates green (`bun test`, `tsc`, `demo`, live A/B +
-  Phase-2 scripts); the interactive real-TUI smoke is the one remaining manual acceptance
-  step. Unlocks dogfooding every later phase against a real session.
+- **Status:** **Built and live-proven.** Catch-all transparent forward landed in
+  `proxy/forward.ts` (`passthrough`) + `proxy/server.ts` (terminal 404 → passthrough);
+  integration test `test/passthrough.test.ts` covers byte-exact forwarding, SSE streaming,
+  engine-bypass, and the route-order invariants. A real interactive TUI smoke confirmed
+  non-owned routes round-trip against the live API — and surfaced the owned-path fidelity
+  defects that became Phase 2.6.
 - **Size:** S.
+
+### Phase 2.6 — Conversation fidelity (registry, capture, identity, wiretap)
+
+- **Goal:** the owned `/v1/messages` path is **faithful**: what the proxy forwards for a
+  conversation is what the agent sent for *that* conversation, changed only by the user's
+  explicit edits and the owned `cache_control` breakpoint ([§9](#9-provider-assumptions--constraints)).
+  This phase exists because the first real-TUI smoke proved the owned path was *not*
+  faithful, in three independent ways — and every observed provider rejection traces to
+  those defects, not to a missing repair layer.
+- **Live findings (verified against the captured store + code):**
+  1. **Conversation multiplexing.** A real interactive agent sends *several independent
+     conversations* through `POST /v1/messages`: the main thread plus side queries
+     (title/recap generation, quota probes, skills probes). A single FrameStore reconciled
+     them all into one linear history, so compose emitted the **merged union** — side-query
+     content was silently injected into the model's context (the inverse of the §1.1
+     premise), and each side query's head overwrote the preamble.
+  2. **Encoding-fragile identity.** The agent re-encodes the same message between the
+     plain-string and `[{type:"text",…}]` forms across requests. The anchor fingerprint
+     hashed the encoding, so a re-encoded resend forked the frame — duplicating its
+     `tool_use` on the wire (the observed `400` "tool use concurrency").
+  3. **Capture infidelity.** SSE reconstruction ignored `thinking_delta`/`signature_delta`
+     but kept the thinking block's start event, so captured assistant turns contained
+     **fabricated unsigned empty thinking blocks** the agent never produced — facially
+     invalid, and a capture≠resend divergence that reconcile cannot match.
+- **Corrected attribution (supersedes the earlier §5.F framing):** the
+  `400 "each thinking block must contain thinking"` was previously attributed to canonical
+  re-serialization "breaking the signature" on the agent's cleared-thinking husks. That
+  attribution was **never tested** and is mechanically dubious — the provider validates
+  parsed values, not client byte order. The bodies that 400'd were corrupted by findings
+  1–3. **Resolved (live evidence, 2026-06-10):** a real interactive session carried
+  multiple agent-signed empty husks per request through the full rewrite (canonical
+  re-serialization + `cache_control` ownership), faithfully, across an entire
+  thinking+tool-use session — every request was accepted. Signed husks are valid input;
+  the historical rejections trace to the fidelity defects, not to the husks.
+- **Vertical slice:**
+  - **Conversation registry** (`engine/registry.ts`): one FrameStore per conversation;
+    identity is *derived*, never heuristic — `key = first-frame anchorFp` (the opening
+    turn's normalized fingerprint; history only appends, so it is immutable in the
+    agent's own view). The head is deliberately **excluded** from identity: wiretap
+    evidence shows the agent embeds a per-invocation billing hash in a system block
+    (`cch=…` re-keys on every process start/resume), and tools can grow mid-conversation
+    (deferred/MCP loading) — keying on either forks the conversation and strands the
+    user's edits. Known collision (accepted, visible in `ctx conversations`): two
+    distinct conversations opening with a byte-identical first message. Control routes
+    target the **active** conversation — most live turn frames, tie → largest token
+    estimate (so a one-shot probe/title query can't steal `active` by recency right
+    after the first real turn), tie → most recent ingest; the resolved conv id is
+    echoed in every control response so the selection is always observable.
+    `?conv=<id>` / `ctx --conv` overrides, `ctx conversations` lists. Durable snapshot
+    v3 = the registry file; same no-migrations policy. A new conversation created from
+    a body that already carries history (>1 frames) logs a loud identity-tripwire
+    warning — that shape means a continuation we failed to match.
+  - **Capture fidelity** (`engine/sse.ts`): capture thinking text, signatures, and
+    `redacted_thinking` so **captured == what the agent resends**. This is reconcile
+    correctness, not a reasoning-display feature (frame view remains about what the model
+    sees).
+  - **Identity normalization** (`engine/fingerprint.ts`): string ≡ single-text-block for
+    anchors and head identity. Normalization applies to *hashes only* — storage and wire
+    stay verbatim. Anchors are recomputed on snapshot restore (derived values are never
+    trusted from disk).
+  - **Wiretap** (`proxy/wiretap.ts`): JSONL raw evidence per owned exchange — the inbound
+    body as raw bytes (byte-exact replay), composed outbound body, redacted headers
+    (explicit denylist + any name matching token/secret/auth/key/cookie), upstream status +
+    error body; light lines for passthrough. Default on for the daemon (`CC_WIRETAP_PATH`,
+    `off` to disable). **Privacy:** the tap and the store contain conversation content,
+    including captured model reasoning text — they are local-only evidence (gitignored,
+    files created 0600) and must not be shared.
+  - **Wire repair deleted** (`engine/wire-integrity.ts`): compose is **faithful** —
+    nothing is added to or removed from the model's context except the user's explicit
+    edits. Suspect blocks (empty thinking husks) are always *detected* and surfaced
+    (`wireWarnings` in compose results, control API, wiretap, stderr), never acted on.
+    The earlier drop-the-husk sweep was removed once the live evidence (above) showed
+    signed husks pass through the faithful rewrite; an **unsigned** husk warning remains
+    meaningful — the agent never produces them, so one on the wire indicates a capture
+    bug on our side. (The Phase 3a sweep for *user-edit-induced* invalidity is
+    unaffected: rendering a user's edit faithfully is the product working, a different
+    category from un-asked-for repair.)
+- **Acceptance:** unit/integration — side queries never bleed into the main thread's wire
+  body (either direction) and never clobber its head; a re-encoded resend does not fork a
+  frame or duplicate a `tool_use`; captured thinking+tool_use turns reconcile to a single
+  frame across the resend; the registry survives a restart with identity intact; wiretap
+  entries carry redacted headers and exact bodies. Live — a fresh real-TUI session with
+  thinking + tool use runs multi-turn with **zero wire warnings of the unsigned class**,
+  `ctx conversations` shows the main thread + side queries separately, a `ctx delete` on
+  the main thread is reflected next turn, and the tapped evidence settles the signed-husk
+  question.
+- **Scope guard:** no curation in compose — nothing is added to or removed from the
+  model's context except the user's explicit edits; detection is surfaced, never acted
+  on. No reasoning-display features. No multi-agent routing beyond the derived
+  conversation key (two distinct conversations with identical head *and* identical first
+  message collide — accepted tracer limitation, documented; see Phase 2.7 for the
+  observed instance).
+- **Status:** **Built and live-validated (2026-06-10).** A real interactive TUI session
+  ran multi-turn thinking + tool use with zero 400s; quota/title side queries landed in
+  their own conversations; signed husks passed faithfully (warnings surfaced, nothing
+  dropped); and the north-star demo completed — the agent resent 18 messages including a
+  deleted secret, the composed wire carried 9 without it, and the model answered NONE.
+  The opt-in sweep was deleted per the evidence rule above.
+- **Size:** M.
+
+### Phase 2.7 — Fork isolation (per-request-view compose)
+
+- **Goal:** requests that *fork* a conversation (the agent's `[SUGGESTION MODE]` /
+  recap-style side queries, which resend the full history plus an ephemeral instruction)
+  must not write into the **emitted linear context** (the main request's view) or ride
+  along on later wire bodies. Fork frames remain in the store and timeline — visible,
+  editable, deletable — they are just not on the emitted view.
+- **Live finding (2026-06-10):** suggestion-mode requests share the conversation's
+  opening message, so the derived key routes them into the main conversation (the
+  documented collision, observed). Their appended frames — including a captured reply
+  that *summarized deleted content back onto the wire* — were emitted into every
+  subsequent composed body (+1…+3 messages per request, wiretap-verified). User-level
+  `delete` mitigates it; the modeling is wrong.
+- **Design (review-converged):** compose emits the **current request's view** — the
+  frames this request's reconcile matched or appended, in order, with tombstones
+  honored — rather than the union of the store. **Scope emission, not matching:**
+  reconcile still matches against the full store (tombstones included), so the
+  delete-then-unaware-resend story is unchanged; the view *includes* tombstone matches
+  and compose-from-view omits them because `deleted` wins. This is the seed of the §2.4
+  branching model: a fork is a branch, not a tail append.
+  - `reconcile` returns a stable ordered mapping (incoming frame → matched/created
+    frame id, tombstone matches included); `ingest` returns the request view
+    `{ frameIds, openFrameId, createdIds, grownIds }`.
+  - **Capture targets the view**, not the store tail: the proxy captures into the
+    view's `openFrameId` (last non-deleted turn frame of the view). Known edge (test,
+    don't pre-engineer): a head-only side instruction appends no frame, so its reply
+    may attach to an existing main frame until the next resend refreshes it; synthesize
+    a fork frame only if evidence forces it.
+  - **`/control/compose` semantics made explicit:** default stays the full-store view
+    (stable for tooling/scripts) plus a `viewNote` stating fork frames may be present
+    that the next emission will exclude; `?view=last` returns the last emitted view
+    (non-persistent, derived; absent after restart).
+  - **Wiretap** logs `viewFrameIds` + omitted-unmatched frame ids per owned request, so
+    live validation is a visible diff (fork frames in store, absent from emissions).
+  - **List surfaces fork-only frames**: `ctx list`/`conversations` annotate frames not
+    in the last emitted view (non-persistent `lastViewFrameIds`), so users understand
+    why side-query frames exist before deleting them.
+  - No new persistence: views are derived per request; after a restart the first
+    incoming request derives a fresh view against the restored store.
+- **Acceptance (tests):** (1) main → suggestion(full history + instruction) → main:
+  suggestion frames stored but absent from the later main outbound; (2) deleted secret
+  resent later: tombstone matched in view, omitted from outbound; (3) a fork capture
+  containing deleted content stays on the fork view and never rides the next main
+  compose; (4) head-only side-instruction variant if observed live.
+- **Status:** design review converged; implementation not started.
 
 ### Phase 3 — Operation breadth (a sequence of vertical op slices)
 

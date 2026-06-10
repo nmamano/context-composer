@@ -5,3 +5,6 @@ node_modules/
 # Phase 2 durable store (daemon default + per-scenario stores) and atomic-write temps
 .ctx-store*.json
 .*.tmp-*
+
+# §11 Phase 2.6 wiretap (raw wire evidence — contains conversation content)
+.ctx-wiretap*.jsonl

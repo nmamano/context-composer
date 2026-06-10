@@ -12,20 +12,43 @@
 // ordered match may bind the survivor's resend to the tombstone. Acceptable for the
 // tracer bullet; revisited if/when it bites.
 
-import type { WireMessage } from "./types.ts";
+import type { Block, WireMessage } from "./types.ts";
 import { canonicalStringify, sha256, stripCacheControlDeep } from "./canonical.ts";
+
+/**
+ * Normalization for IDENTITY ONLY — storage and the wire stay verbatim (fidelity rule:
+ * we emit what the agent sent; we only normalize what we *hash*).
+ *
+ * A plain-string content is the API's documented shorthand for one text block, and a
+ * real agent re-encodes between the two forms across requests (live finding, §11 Phase 2.6: the
+ * same user message arrived as a string in one request and as [{type:"text",…}] in the
+ * next; the fingerprint mismatch forked the frame and duplicated its tool_use on the
+ * wire). Hash the canonical block form so both encodings are the same identity.
+ */
+function identityContent(content: string | Block[] | undefined | null): Block[] | null {
+  if (content === undefined || content === null) return null;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return content;
+}
 
 export function fingerprintMessage(msg: WireMessage): string {
   // Strip cache_control first: the agent attaches/relocates it between turns, so the
   // same message must hash identically with or without the marker (see live finding).
-  return sha256(canonicalStringify(stripCacheControlDeep({ role: msg.role, content: msg.content })));
+  return sha256(
+    canonicalStringify(
+      stripCacheControlDeep({ role: msg.role, content: identityContent(msg.content) }),
+    ),
+  );
 }
 
 /** Head identity: the stable cache prefix (tools + system). Used to detect head
  *  changes and to anchor the preamble frame. cache_control is normalized out so a moved
- *  provider marker doesn't read as a head change. */
+ *  provider marker doesn't read as a head change; string/array system encodings hash
+ *  identically (same identity rule as message content). */
 export function fingerprintHead(system: unknown, tools: unknown): string {
+  const sys =
+    typeof system === "string" ? [{ type: "text", text: system }] : system ?? null;
   return sha256(
-    canonicalStringify(stripCacheControlDeep({ tools: tools ?? null, system: system ?? null })),
+    canonicalStringify(stripCacheControlDeep({ tools: tools ?? null, system: sys })),
   );
 }

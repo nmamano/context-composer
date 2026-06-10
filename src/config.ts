@@ -14,7 +14,14 @@ export const CONTROL_BASE_URL =
 export const UPSTREAM_BASE_URL =
   process.env.CC_UPSTREAM_URL ?? "https://api.anthropic.com";
 
-// Durable store path for the proxy daemon (Phase 2). A restart reloads this file's
-// frame state + commit graph. Tests/library callers pass their own path (or none, for
-// in-memory) — this default applies only to the daemon entrypoint.
+// Durable store path for the proxy daemon (Phase 2; a conversation REGISTRY since
+// §11 Phase 2.6). A restart reloads every conversation's frame state + commit graph.
+// Tests/library callers pass their own path (or none, for in-memory) — this default
+// applies only to the daemon entrypoint.
 export const STORE_PATH = process.env.CC_STORE_PATH ?? "./.ctx-store.json";
+
+// Wiretap (§11 Phase 2.6): JSONL raw wire evidence — exact inbound body, composed outbound
+// body, redacted headers, upstream status/error per owned request. Daemon-only
+// default; tests opt in with their own path. Set CC_WIRETAP_PATH=off to disable.
+const wiretapEnv = process.env.CC_WIRETAP_PATH ?? "./.ctx-wiretap.jsonl";
+export const WIRETAP_PATH = wiretapEnv === "off" ? undefined : wiretapEnv;

@@ -10,16 +10,29 @@
 //   bun run src/cli/ctx.ts history             (commit log — what you DID to the context)
 //   bun run src/cli/ctx.ts timeline            (full audit log — incl. captures)
 //   bun run src/cli/ctx.ts revert [<commit>]   (Phase 2 versioning verbs)
+//   bun run src/cli/ctx.ts conversations       (§11 Phase 2.6: one store per conversation)
+//
+// Every store-scoped verb targets the ACTIVE conversation (most total turn frames
+// incl. tombstones, so deleting frames never demotes it; ties → largest token
+// estimate, then most recent ingest). Pass `--conv <id>` to target another one.
 
 import { CONTROL_BASE_URL } from "../config.ts";
 
+/** Set by main() from a global `--conv <id>` flag; appended to every control call. */
+let convId: string | null = null;
+
+function withConv(path: string): string {
+  if (!convId) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}conv=${encodeURIComponent(convId)}`;
+}
+
 async function get(path: string): Promise<unknown> {
-  const res = await fetch(`${CONTROL_BASE_URL}${path}`);
+  const res = await fetch(`${CONTROL_BASE_URL}${withConv(path)}`);
   return res.json();
 }
 
 async function post(path: string, body: unknown): Promise<unknown> {
-  const res = await fetch(`${CONTROL_BASE_URL}${path}`, {
+  const res = await fetch(`${CONTROL_BASE_URL}${withConv(path)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -34,7 +47,8 @@ function fail(msg: string): never {
 
 async function cmdList(args: string[]): Promise<void> {
   const showAll = args.includes("--all");
-  const { frames } = (await get("/control/list")) as {
+  const { conv, frames } = (await get("/control/list")) as {
+    conv: string;
     frames: Array<{
       id: string;
       kind: string;
@@ -48,6 +62,7 @@ async function cmdList(args: string[]): Promise<void> {
   const visible = frames.filter((f) => showAll || !f.deleted);
   const hiddenDeleted = frames.length - visible.length;
 
+  console.log(`(conversation ${conv} — see \`ctx conversations\`; target another with --conv <id>)`);
   for (const f of visible) {
     const flag = f.deleted ? " [deleted]" : "";
     console.log(
@@ -68,11 +83,14 @@ async function cmdShow(args: string[]): Promise<void> {
 async function cmdDelete(args: string[]): Promise<void> {
   const ids = args.filter((a) => !a.startsWith("-"));
   if (ids.length === 0) fail("usage: ctx delete <id...>");
-  const { deleted } = (await post("/control/delete", { ids })) as {
+  const { conv, deleted } = (await post("/control/delete", { ids })) as {
+    conv: string;
     deleted: string[];
   };
   console.log(
-    deleted.length ? `deleted: ${deleted.join(", ")}` : "nothing deleted",
+    deleted.length
+      ? `deleted: ${deleted.join(", ")} (conversation ${conv})`
+      : `nothing deleted (conversation ${conv})`,
   );
 }
 
@@ -129,6 +147,36 @@ async function cmdTimeline(_args: string[]): Promise<void> {
   }
 }
 
+async function cmdConversations(_args: string[]): Promise<void> {
+  const { conversations } = (await get("/control/conversations")) as {
+    conversations: Array<{
+      id: string;
+      turnFrames: number;
+      totalTurnFrames: number;
+      tokenEstimate: number;
+      lastIngestAt: string | null;
+      active: boolean;
+      suspicious: { reason: string; frameCount: number; at: string } | null;
+    }>;
+  };
+  if (conversations.length === 0) {
+    console.log("(no conversations yet)");
+    return;
+  }
+  for (const c of conversations) {
+    const mark = c.active ? "*" : " ";
+    const turns =
+      c.turnFrames === c.totalTurnFrames
+        ? `${c.turnFrames} turn-frames`
+        : `${c.turnFrames} live / ${c.totalTurnFrames} total turn-frames`;
+    const warn = c.suspicious ? `  ⚠ ${c.suspicious.reason} (${c.suspicious.frameCount} frames at first contact)` : "";
+    console.log(
+      `${mark} ${c.id.padEnd(4)} ${turns.padEnd(34)} ${String(c.tokenEstimate).padStart(7)}tok  last ingest ${c.lastIngestAt ?? "(never)"}${warn}`,
+    );
+  }
+  console.log("(* = active — the conversation store-scoped verbs target; override with --conv <id>)");
+}
+
 async function cmdRevert(args: string[]): Promise<void> {
   const commit = args.find((a) => !a.startsWith("-")); // optional; defaults to HEAD
   const result = (await post("/control/revert", commit ? { commit } : {})) as {
@@ -141,7 +189,16 @@ async function cmdRevert(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [cmd, ...args] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  // Global --conv <id>: target a specific conversation instead of the active one.
+  const convIdx = argv.indexOf("--conv");
+  if (convIdx >= 0) {
+    const id = argv[convIdx + 1];
+    if (!id || id.startsWith("-")) fail("--conv requires a conversation id (see `ctx conversations`)");
+    convId = id!;
+    argv.splice(convIdx, 2);
+  }
+  const [cmd, ...args] = argv;
   switch (cmd) {
     case "list":
       return cmdList(args);
@@ -157,9 +214,11 @@ async function main(): Promise<void> {
       return cmdTimeline(args);
     case "revert":
       return cmdRevert(args);
+    case "conversations":
+      return cmdConversations(args);
     default:
       fail(
-        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] | history | timeline | revert [<commit>]`,
+        `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | compose [--dump] [--hash-head] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
       );
   }
 }

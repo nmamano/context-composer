@@ -23,7 +23,7 @@ import type {
 import { decompose } from "./decompose.ts";
 import { reconcile } from "./reconcile.ts";
 import { compose, type ComposeResult } from "./compose.ts";
-import { fingerprintHead } from "./fingerprint.ts";
+import { fingerprintHead, fingerprintMessage } from "./fingerprint.ts";
 import { canonicalStringify, stripCacheControlDeep } from "./canonical.ts";
 import { estimateTokens } from "./tokens.ts";
 import type { CapturedAssistant } from "./sse.ts";
@@ -393,6 +393,20 @@ export class FrameStore {
     this.preamble = s.preamble;
     this.frames = s.frames;
     this.envelope = s.envelope;
+    // Self-healing identity: anchor fingerprints are DERIVED values (opening message /
+    // head), so recompute them on load instead of trusting persisted bytes — a
+    // fingerprint-algorithm change must never silently fork identities against a stale
+    // store (the resend would stop matching and every frame would duplicate).
+    if (this.preamble) {
+      this.preamble.anchorFp = fingerprintHead(this.preamble.system, this.preamble.tools);
+    }
+    const seen = new Map<string, number>();
+    for (const f of this.frames) {
+      if (f.messages.length > 0) f.anchorFp = fingerprintMessage(f.messages[0]!);
+      const n = seen.get(f.anchorFp) ?? 0;
+      f.occurrence = n;
+      seen.set(f.anchorFp, n + 1);
+    }
     this.commits.restore({ commits: s.commits, head: s.head });
     this.events.restore(s.events);
     this.seq = s.seq;

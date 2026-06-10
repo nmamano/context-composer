@@ -2,9 +2,16 @@
 //
 // The proxy tees the upstream response: one branch streams byte-for-byte to the
 // caller (true passthrough), the other is read here to reconstruct the assistant
-// message so it can be captured as a frame. We reconstruct just enough — role,
-// content blocks (text + tool_use), and stop_reason — to recompose the next
-// request. Token/usage accounting is intentionally NOT part of identity or output.
+// message so it can be captured as a frame. Token/usage accounting is intentionally
+// NOT part of identity or output.
+//
+// FIDELITY RULE (§11 Phase 2.6 live finding): the captured assistant must equal what the
+// wrapped agent will RESEND next turn, or reconcile sees two different turns. That
+// includes thinking blocks: we accumulate `thinking_delta` and `signature_delta`
+// (and keep `redacted_thinking` blocks, which arrive complete in their start event).
+// An earlier version ignored those deltas, so capture fabricated UNSIGNED empty
+// thinking husks — invalid blocks the agent never sent. Capturing reasoning here is
+// reconcile-correctness, not a display feature.
 //
 // Both transports are handled: streaming SSE and a plain JSON response (agents
 // toggle `stream`), through one capture shape.
@@ -48,6 +55,7 @@ export function reconstructFromSSE(raw: string): CapturedAssistant {
         const cb = structuredClone(evt.content_block) as Block;
         if (cb.type === "tool_use") cb.input = cb.input ?? {};
         if (cb.type === "text") cb.text = cb.text ?? "";
+        if (cb.type === "thinking") cb.thinking = cb.thinking ?? "";
         blocks[index] = { block: cb, partialJson: "" };
         break;
       }
@@ -60,6 +68,12 @@ export function reconstructFromSSE(raw: string): CapturedAssistant {
           slot.block.text = ((slot.block.text as string) ?? "") + (delta.text as string);
         } else if (delta.type === "input_json_delta") {
           slot.partialJson += (delta.partial_json as string) ?? "";
+        } else if (delta.type === "thinking_delta") {
+          slot.block.thinking =
+            ((slot.block.thinking as string) ?? "") + (delta.thinking as string);
+        } else if (delta.type === "signature_delta") {
+          slot.block.signature =
+            ((slot.block.signature as string) ?? "") + (delta.signature as string);
         }
         break;
       }

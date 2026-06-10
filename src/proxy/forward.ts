@@ -19,6 +19,11 @@ import {
 export interface ForwardResult {
   response: Response; // pass straight back to the caller
   capture: Promise<CapturedAssistant | null>;
+  /** Upstream HTTP status — recorded by the wiretap (§11 Phase 2.6). */
+  upstreamStatus: number;
+  /** Upstream body when the response was non-2xx and buffered (the error JSON the
+   *  provider returned) — the single most useful diagnostic of the live findings. */
+  upstreamErrorBody: string | null;
 }
 
 // Hop-by-hop / length headers we must not blindly forward; fetch manages them.
@@ -94,6 +99,8 @@ export async function forward(
         headers,
       }),
       capture,
+      upstreamStatus: res.status,
+      upstreamErrorBody: null, // errors are not SSE; they take the buffered branch below
     };
   }
 
@@ -115,6 +122,8 @@ export async function forward(
       headers,
     }),
     capture,
+    upstreamStatus: res.status,
+    upstreamErrorBody: res.ok ? null : text,
   };
 }
 

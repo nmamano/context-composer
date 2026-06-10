@@ -87,31 +87,33 @@ export class JsonFileStore implements Persistence {
     // Deterministic bytes + cache_control normalized out (the field is the provider's,
     // not semantic). Source fingerprints are already cache-control-free, so this only
     // normalizes STORED wire content and leaves identity stable across reload.
-    const bytes = canonicalStringify(stripCacheControlDeep(snap));
-    // Atomic-ish: write a same-dir temp, fsync, rename over the target. Same-dir keeps
-    // the rename on one filesystem (atomic); a crash mid-write leaves the old file intact.
-    const tmp = join(dirname(this.path), `.${basename(this.path)}.tmp-${process.pid}`);
+    atomicWriteFile(this.path, canonicalStringify(stripCacheControlDeep(snap)));
+  }
+}
+
+/** Atomic-ish durable write, shared by the single-store file and the conversation
+ *  registry file: write a same-dir temp, fsync, rename over the target. Same-dir keeps
+ *  the rename on one filesystem (atomic); a crash mid-write leaves the old file intact.
+ *  Throws a CLEAR error (in-memory state stays intact, callers turn it into a clean 5xx). */
+export function atomicWriteFile(path: string, bytes: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.tmp-${process.pid}`);
+  try {
+    // 0600: the store holds conversation content (including captured model reasoning).
+    const fd = openSync(tmp, "w", 0o600);
     try {
-      const fd = openSync(tmp, "w");
-      try {
-        writeFileSync(fd, bytes);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-      renameSync(tmp, this.path);
-    } catch (e) {
-      // Never leave a partial temp behind, and surface a CLEAR error: in-memory state is
-      // still intact, so the caller (a control route / ingest) can turn this into a clean
-      // 5xx instead of a raw fs stack trace.
-      try {
-        rmSync(tmp, { force: true });
-      } catch {
-        /* best effort — the temp is gitignored and pid-scoped */
-      }
-      throw new Error(
-        `context-composer: failed to persist store at ${this.path}: ${String(e)}`,
-      );
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
     }
+    renameSync(tmp, path);
+  } catch (e) {
+    // Never leave a partial temp behind.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* best effort — the temp is gitignored and pid-scoped */
+    }
+    throw new Error(`context-composer: failed to persist store at ${path}: ${String(e)}`);
   }
 }
