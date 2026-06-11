@@ -62,7 +62,18 @@ const baseFrame = {
 
 const shows: Record<string, unknown> = {
   f1: { ...baseFrame, id: "f1", title: "alpha", tokenEstimate: 10, messages: [{ role: "user", content: "one" }] },
-  f2: { ...baseFrame, id: "f2", title: "beta", tokenEstimate: 12, messages: [{ role: "user", content: "two" }] },
+  // f2 is MULTI-message (a realistic captured turn): F-060's edit prefill must
+  // NOT fire for it — flattening would silently restructure on submit.
+  f2: {
+    ...baseFrame,
+    id: "f2",
+    title: "beta",
+    tokenEstimate: 12,
+    messages: [
+      { role: "user", content: "two" },
+      { role: "assistant", content: "two answered" },
+    ],
+  },
 };
 
 const composeMeta = {
@@ -232,10 +243,12 @@ test("param op (edit) opens the generated form and maps values via build()", asy
   await act(async () => click(edit));
   const form = container.querySelector('.op-form[data-op="edit"]')!;
   expect(form).not.toBeNull();
-  // Required param empty → submit disabled (presence-only gating).
+  // Required param empty → submit disabled (presence-only gating). f2 is
+  // multi-message, so F-060's prefill correctly stayed away.
   const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
   expect(submit.disabled).toBe(true);
   const ta = form.querySelector("textarea") as HTMLTextAreaElement;
+  expect(ta.value).toBe("");
   await act(async () => setNativeValue(ta, "replacement text"));
   await act(async () => click(form.querySelector('button[type="submit"]')!));
   for (let i = 0; i < 4; i++) {
@@ -529,4 +542,104 @@ test("F-047: combine position dropdown — default omits after; start maps to nu
   }
   expect(posts).toHaveLength(2);
   expect(posts[1]!.body).toEqual({ ids: ["f1", "f2"], after: "f2" });
+});
+
+// F-060: edit opens PREFILLED with the frame's current content when faithful
+// (single text message carrying the role edit would write) — an unchanged
+// submit reproduces the emission. prefill.test.ts pins the faithfulness rules;
+// this pins the flow through the form.
+test("F-060: edit form opens prefilled for a single-text-message frame; unchanged submit reproduces it", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () =>
+    click(container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="edit"]')!),
+  );
+  const form = container.querySelector('.op-form[data-op="edit"]')!;
+  const ta = form.querySelector("textarea") as HTMLTextAreaElement;
+  expect(ta.value).toBe("one"); // f1's lone user message, verbatim
+  // Prefill satisfies the required param — submit enabled immediately.
+  const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+  expect(submit.disabled).toBe(false);
+  await act(async () => click(submit));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ id: "f1", text: "one" });
+});
+
+// F-061: the compact form explains itself — explainer line, prefilled summary
+// text (the offload chain), plain-language tips on both fields.
+test("F-061: compact form opens prefilled with the summary chain, carries an explainer and jargon-free tips", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () =>
+    click(container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="compact"]')!),
+  );
+  const form = container.querySelector('.op-form[data-op="compact"]')!;
+  // Explainer orients the user (the F-042 combine-panel pattern).
+  const explainer = form.querySelector(".op-form-explainer")!;
+  expect(explainer).not.toBeNull();
+  expect(explainer.textContent).toContain("Shrink what the model sees");
+  // Prefill: f1.summary is null → engine derive over the emission → "one".
+  const ta = form.querySelector("textarea") as HTMLTextAreaElement;
+  expect(ta.value).toBe("one");
+  // Both fields carry instant tips, free of engine jargon (the F-028 ban).
+  const tips = Array.from(form.querySelectorAll(".op-param[data-tip]")).map(
+    (el) => el.getAttribute("data-tip")!,
+  );
+  expect(tips.length).toBe(2);
+  for (const tip of tips) {
+    expect(tip.length).toBeGreaterThan(0);
+    for (const word of ["emission", "audit", "registry", "arity"]) {
+      expect(tip.toLowerCase()).not.toContain(word);
+    }
+  }
+  // The regen tip states the precedence truth: ticked regen ignores the box.
+  expect(form.querySelector(".op-flag")!.getAttribute("data-tip")).toContain(
+    "text box is ignored",
+  );
+});
+
+// F-063: position dropdowns offer only viable destinations — deleted frames,
+// fork-only frames and the preamble (whose anchor can ONLY refuse: the
+// engine's add/move/combine lookup covers turn frames alone) are filtered
+// from the OPTION list. A destination-list filter, not op hiding: the menu
+// itself stays complete (pinned by the "ops are never hidden" test) and the
+// daemon's refusals still render verbatim.
+test("F-063: position dropdowns exclude deleted, fork-only and preamble frames", async () => {
+  const extras = [
+    { ...baseSummary, id: "p0", kind: "preamble", title: "preamble", tokenEstimate: 9, inLastView: null },
+    { ...baseSummary, id: "f3", title: "tombstone", tokenEstimate: 5, deleted: true },
+    { ...baseSummary, id: "f4", title: "side query", tokenEstimate: 7, inLastView: false },
+  ];
+  frames.push(...(extras as unknown as typeof frames));
+  shows.p0 = { ...baseFrame, id: "p0", kind: "preamble", title: "preamble", tokenEstimate: 9, messages: [] };
+  shows.f3 = { ...baseFrame, id: "f3", title: "tombstone", tokenEstimate: 5, deleted: true, messages: [{ role: "user", content: "x" }] };
+  shows.f4 = { ...baseFrame, id: "f4", title: "side query", tokenEstimate: 7, messages: [{ role: "user", content: "y" }] };
+  try {
+    const { container, act } = await renderApp();
+    await openFrameView(container, act);
+    // The ADD form's dropdown (shared position renderer)…
+    await act(async () => click(container.querySelector(".store-ops .op-add")!));
+    const addPos = container.querySelector(
+      '.op-form[data-op="add"] select',
+    ) as HTMLSelectElement;
+    const addValues = Array.from(addPos.options).map((o) => o.value);
+    expect(addValues).toEqual(["", "start", "f1", "f2"]); // no p0/f3/f4
+    // …and the combine panel's own dropdown.
+    await act(async () => click(container.querySelector(".store-ops .op-combine")!));
+    const combinePos = container.querySelector(
+      ".combine-position select",
+    ) as HTMLSelectElement;
+    const combineValues = Array.from(combinePos.options).map((o) => o.value);
+    expect(combineValues).toEqual(["", "start", "f1", "f2"]);
+  } finally {
+    frames.splice(2);
+    delete shows.p0;
+    delete shows.f3;
+    delete shows.f4;
+  }
 });

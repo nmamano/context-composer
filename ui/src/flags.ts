@@ -9,6 +9,25 @@ export interface FlagChip {
   label: string;
 }
 
+/** F-063 (plans/ui-feedback.md): position dropdowns (add / move / combine)
+ *  offer only anchors worth picking — a DESTINATION-list filter, not op
+ *  hiding (the F-006 distinction: card visibility ≠ op availability; ops are
+ *  still never hidden by frame state, and the daemon's refusal still renders
+ *  verbatim for anything else invalid). Excluded:
+ *    - the preamble: the engine's anchor lookup covers turn frames only
+ *      (state.ts add/move/combine all check `this.frames.some(...)`, which
+ *      the preamble is not part of) — "after p0" can ONLY refuse;
+ *    - deleted frames: Nil's report — anchoring after a tombstone fails;
+ *    - fork-only frames (inLastView === false, strictly): hidden by default
+ *      in the frame view and not part of the main thread (Nil: exclude).
+ *  Absorbed parts / split originals STAY: they are valid anchors by design
+ *  (F-047 plan: they keep their order-spine slot). */
+export function positionAnchors(frames: FrameSummary[]): FrameSummary[] {
+  return frames.filter(
+    (f) => f.kind !== "preamble" && !f.deleted && f.inLastView !== false,
+  );
+}
+
 export function frameFlags(f: FrameSummary): FlagChip[] {
   const chips: FlagChip[] = [];
   if (f.deleted) chips.push({ key: "deleted", label: "deleted" });

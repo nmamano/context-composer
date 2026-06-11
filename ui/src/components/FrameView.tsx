@@ -7,7 +7,7 @@
 import { Fragment, type ReactNode } from "react";
 import type { FrameSummary } from "../../../src/engine/state.ts";
 import type { OpSpec } from "../../../src/shared/ops.ts";
-import { frameFlags } from "../flags.ts";
+import { frameFlags, positionAnchors } from "../flags.ts";
 import { OpMenu } from "./OpMenu.tsx";
 
 export function FrameView(props: {
@@ -104,7 +104,9 @@ export function FrameView(props: {
             >
               <option value="">at the first picked frame's place</option>
               <option value="start">at the start</option>
-              {props.frames.map((f) => (
+              {/* F-063: only viable anchors (deleted / fork-only / preamble
+                  excluded — see positionAnchors); refusals still speak. */}
+              {positionAnchors(props.frames).map((f) => (
                 <option key={f.id} value={f.id}>
                   after {f.id} — {f.title.slice(0, 40)}
                 </option>
@@ -128,6 +130,19 @@ export function FrameView(props: {
       )}
       {props.toolbarForm}
       {props.frames.length === 0 && <p className="empty">no frames yet</p>}
+      {/* F-059 (Nil picked option c): after a daemon restart every frame's
+          inLastView is null until the next request re-establishes a view
+          (derived per request, never persisted — locked since Phase 2.7).
+          The blank state read as a regression ("show fork-only frames button
+          does not even appear now") — this hint names what's pending. The
+          all-null condition is exactly "no view established": with a view, at
+          least one captured turn frame is true/false. */}
+      {props.frames.length > 0 &&
+        props.frames.every((f) => f.inLastView === null) && (
+          <p className="frames-hint">
+            frame roles (like fork-only) appear after the next message
+          </p>
+        )}
       {visible.map((f) => {
         const chips = frameFlags(f);
         return (

@@ -12,8 +12,29 @@ import { useEffect, useRef, useState } from "react";
 import type { OpSpec, ParamSpec } from "../../../src/shared/ops.ts";
 import { singleTargetOps } from "../../../src/shared/ops.ts";
 import type { FrameSummary } from "../../../src/engine/state.ts";
+import { positionAnchors } from "../flags.ts";
 
 export type FormValues = Record<string, string | boolean | undefined>;
+
+/** F-061: plain-language help on form fields whose purpose confused Nil —
+ *  UI-side map (presentation, not registry data; ops.ts stays untouched).
+ *  Truth checked against the wire shape: build()/the daemon's compact route
+ *  both let regen WIN when both are set, so "the text box is ignored". */
+const PARAM_TIPS: Record<string, string> = {
+  "compact.text":
+    "the shorter text the model will see instead of this frame's full content — written for you from the frame's summary; edit freely",
+  "compact.regen":
+    "let the AI write the replacement text for you when you submit — when ticked, the text box is ignored",
+  "edit.text":
+    "replaces everything this frame holds with this text — when a frame holds several messages, the box starts empty",
+};
+
+/** F-061: one-line explainer inside forms that need orienting (the F-042
+ *  combine-panel pattern). */
+const FORM_EXPLAINERS: Record<string, string> = {
+  compact:
+    "Shrink what the model sees: this frame's content is replaced by a short summary in the conversation sent to the model. Undo from the history tab.",
+};
 
 function ParamField(props: {
   spec: ParamSpec;
@@ -28,9 +49,11 @@ function ParamField(props: {
   // (before or after the id?) — a dropdown makes the AFTER semantics explicit.
   // Values stay exactly what build()/position() expect: "" = end (omitted),
   // "start" = after:null, otherwise a frame id (after that frame).
+  // F-061: instant CSS tooltip on fields that carry one (PARAM_TIPS).
+  const tip = PARAM_TIPS[`${props.verb}.${spec.key}`];
   if (spec.kind === "position") {
     return (
-      <label className="op-param">
+      <label className="op-param" data-tip={tip}>
         insert position
         <select
           value={typeof props.value === "string" ? props.value : ""}
@@ -44,7 +67,10 @@ function ParamField(props: {
                 : "(pick a position)"}
           </option>
           <option value="start">at the start</option>
-          {props.frames?.map((f) => (
+          {/* F-063: only viable anchors are offered (positionAnchors —
+              deleted / fork-only / preamble excluded); the daemon's refusal
+              still speaks for anything else invalid. */}
+          {positionAnchors(props.frames ?? []).map((f) => (
             <option key={f.id} value={f.id}>
               after {f.id} — {f.title.slice(0, 40)}
             </option>
@@ -55,7 +81,7 @@ function ParamField(props: {
   }
   if (spec.kind === "flag") {
     return (
-      <label className="op-param op-flag">
+      <label className="op-param op-flag" data-tip={tip}>
         <input
           type="checkbox"
           checked={props.value === true}
@@ -67,7 +93,7 @@ function ParamField(props: {
   }
   if (spec.kind === "textarea") {
     return (
-      <label className="op-param">
+      <label className="op-param" data-tip={tip}>
         {spec.label}
         <textarea
           value={typeof props.value === "string" ? props.value : ""}
@@ -79,7 +105,7 @@ function ParamField(props: {
     );
   }
   return (
-    <label className="op-param">
+    <label className="op-param" data-tip={tip}>
       {spec.label}
       <input
         type="text"
@@ -120,6 +146,11 @@ export function OpForm(props: {
       }}
     >
       <header>{props.op.verb}</header>
+      {/* F-061: forms that confused Nil orient the user up front (the F-042
+          combine-panel pattern); copy states engine truth only. */}
+      {FORM_EXPLAINERS[props.op.verb] && (
+        <p className="op-form-explainer">{FORM_EXPLAINERS[props.op.verb]}</p>
+      )}
       {props.op.params.map((p) => (
         <ParamField
           key={p.key}

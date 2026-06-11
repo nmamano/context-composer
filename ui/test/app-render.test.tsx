@@ -441,6 +441,38 @@ test("F-006: fork-only frames hidden by default; toggle reveals and re-hides", a
   await unmount();
 });
 
+// F-059 (Nil picked option c): after a daemon restart, view annotations are
+// blank (every inLastView is null — derived per request, never persisted) and
+// the fork toggle vanishes; the frame view says what's pending instead of
+// looking broken.
+test("F-059c: all-null view annotations show the restart hint; any established view hides it", async () => {
+  // Normal fixture (mixed true/false/null): no hint.
+  const a = await renderApp();
+  await a.act(async () => click(a.tab("frames")));
+  expect(a.container.querySelector(".frames-hint")).toBeNull();
+  await a.unmount();
+  // Post-restart shape: EVERY frame's inLastView is null.
+  const mut = frames as { inLastView: boolean | null }[];
+  const saved = mut.map((f) => f.inLastView);
+  for (const f of mut) f.inLastView = null;
+  try {
+    const b = await renderApp();
+    await b.act(async () => click(b.tab("frames")));
+    const hint = b.container.querySelector(".frames-hint")!;
+    expect(hint).not.toBeNull();
+    expect(hint.textContent).toBe(
+      "frame roles (like fork-only) appear after the next message",
+    );
+    // The fork toggle is correctly absent (no fork-only frames known).
+    expect(b.container.querySelector(".fork-toggle")).toBeNull();
+    await b.unmount();
+  } finally {
+    mut.forEach((f, i) => {
+      f.inLastView = saved[i] ?? null;
+    });
+  }
+});
+
 // F-018: entering the conversation view with a selection jumps to its bubble;
 // F-020: without one, the view offers the jump-to-latest control.
 test("F-018/F-020: conversation view jumps to the selected frame on entry; jump button present", async () => {

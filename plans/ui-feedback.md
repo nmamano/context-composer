@@ -569,7 +569,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-056 — Pending op form (e.g. add frame) should close when navigating away, not carry over
 - reported: 2026-06-11 (Nil's "9.1") · class: refinement
-- status: fixed@batch-10 (reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
+- status: fixed@b333836 (batch 10; reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
 - what: "'add frame' menu should close automatically when navigating away from 'frames' view. not carry over."
 - where: any pending op form + view switching
 - expected: navigating to another view closes the pending form
@@ -578,7 +578,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-057 — Page reload snaps back to the "active" conversation instead of the one being viewed
 - reported: 2026-06-11 (Nil's "9.2") · class: refinement
-- status: fixed@batch-10 (reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
+- status: fixed@b333836 (batch 10; reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
 - what: "why does context composer go back to session c3 when i reload the page? that's annoying"
 - where: conversation switcher / initial load
 - expected: reload reopens the conversation you were on
@@ -601,29 +601,30 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-059 — Should refresh re-establish view annotations after a daemon restart?
 - reported: 2026-06-11 · class: design-question
-- status: awaiting Nil's pick (touches a LOCKED decision — views derived per request, never persisted)
+- status: fixed@batch-11 (option c — pure-UI hint; the locked derived-per-request decision untouched)
 - what: "it works, but confusing..? i feel like the refresh button should also trigger this annotation, or does that break the flow?"
 - where: inLastView after daemon restart; refresh button
 - expected: TBD by Nil
 - evidence: refresh CAN'T recompute it today: "which frames rode the last wire request" lives only in RAM — locked out of persistence to protect fork isolation (Phase 2.7/3a). The annotation genuinely returns on the next request. BUT: persisting the last view's frame-id list as DISPLAY-ONLY metadata would not touch emission (compose keeps deriving views per request) — fork isolation stays intact; it is still a locked-decision amendment
 - resolution: options: (a) keep — annotations return on the next turn (zero risk); (b) persist lastEmittedView as display-only metadata so restarts don't blank annotations (engine+store change, plan gate; compose untouched — explicitly NOT used for emission); (c) pure-UI empty-state hint after restart ("frame roles appear after the next message"). Nil picks; (b) needs a plan gate
 - decided (Nil, 2026-06-11): option (c) — empty-state hint. In batch 11
+- resolution (batch 11): frame view shows a dim hint — "frame roles (like fork-only) appear after the next message" — exactly when EVERY frame's inLastView is null (the restart shape: with any established view at least one captured turn frame is true/false; the F-045 marker flip only acts on true, so it cannot break the condition). Regressions: app-render "F-059c" (hint on all-null, absent on the normal fixture, fork toggle correctly absent); ui:smoke asserts hint-presence against the API truth both ways (the smoke store loads from disk → restart shape → hint branch exercised live)
 
 
 ## F-060 — Edit form should be prefilled with the frame's current content
 - reported: 2026-06-11 (Nil's "10.1") · class: refinement
-- status: triaged (batch 11)
+- status: fixed@batch-11
 - what: "the edit menu should be pre-filled with the current content."
 - where: edit op form
 - evidence: pure UI (prefill.ts, the F-003 pattern). Care: --text replaces the frame's emission with ONE message — prefill must be faithful-on-unchanged-submit. Single text-bearing-message emissions prefill verbatim; multi-message emissions get no text prefill (a flattened prefill would silently restructure on submit)
-- resolution: (batch 11)
+- resolution: batch 11: edit prefills the CURRENT emission's text when faithful — exactly one message, carrying the role edit would write (state.ts setRepresentation uses the frame opener's role), content a plain string (byte-faithful) or a single text block (same text+role; shape normalizes to edit's own string output — flagged to reviewer). Multi-message / multi-block / role-mismatched emissions open EMPTY as before; an edit.text tooltip says why ("when a frame holds several messages, the box starts empty"). Covers the common case: added frames and previously edited/compacted frames prefill verbatim; raw captured turns (user+assistant) do not. Regressions: prefill.test.ts F-060 ×6 (string leg, representation-wins, one-text-block leg, multi-message, multi-block/non-text, role mismatch); op-menu F-060 (form opens prefilled, submit enabled, unchanged submit posts the same text)
 
 ## F-061 — Compact form is confusing; should work like offload (prefilled editable summary)
 - reported: 2026-06-11 (Nil's "10.2") · class: refinement
-- status: triaged (batch 11, UI side; param-surface change only if Nil asks after)
+- status: fixed@batch-11
 - what: "I don't understand the compact menu. What is 'summary text'? what does 'regen (LLM)' do? (tooltip would be good.) What happens if you use both? How is 'summary text' different than just 'edit'? ... maybe: the LLM summary is generated automatically, and optionally the user can edit it. Note: the offloading op does this correctly."
-- evidence: pure-UI fix available: prefill compact's text with the same chain offload uses (frame auto-summary ?? deterministic derive) + plain tooltips (text wins over regen when both; regen = the model writes it server-side at op time)
-- resolution: (batch 11)
+- evidence: pure-UI fix available: prefill compact's text with the same chain offload uses (frame auto-summary ?? deterministic derive) + plain tooltips. PRECEDENCE CORRECTED at implementation (the triage note above had it backwards): both ops.ts build() and the daemon's /control/compact route let REGEN win when both are set — verified in source; the tooltip states "when ticked, the text box is ignored"
+- resolution: batch 11: compact's text prefills f.summary ?? deriveSummary(current emission) — a starting value per Nil's standing prefill principle (NOT an engine-default preview: compact has no server-side text default; offload's literal fallback is not borrowed). Form gains a one-line explainer ("Shrink what the model sees: this frame's content is replaced by a short summary in the conversation sent to the model. Undo from the history tab.") + instant tips on both fields (UI-side PARAM_TIPS map in OpMenu.tsx — presentation, ops.ts untouched). Regressions: prefill.test.ts F-061 ×3 (summary-wins, derive fallback incl. representation, empty-when-underivable); op-menu F-061 (explainer, prefill through the form, tips non-empty + jargon-ban, regen-precedence tip pinned)
 
 ## F-062 — Enrichment produced wrong metadata for t15 (fallback title on a real question) — enriches too early
 - reported: 2026-06-11 (Nil's "10.3") · class: bug
@@ -635,10 +636,10 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-063 — Position dropdowns offer destinations that can only refuse (deleted frames; fork-only questionable)
 - reported: 2026-06-11 (Nil's "10.4") · class: refinement
-- status: triaged (batch 11)
+- status: fixed@batch-11
 - what: "trying to move a frame after a deleted frame fails. that's ok, but maybe it shouldn't be an option ... i think fork-only frames should be excluded as well"
-- evidence: pure UI — the shared position dropdown lists every loaded frame. RAIL NOTE: ops are never hidden by frame state (guards speak), but this filters a DESTINATION list, not an op; same distinction as F-006 (card visibility ≠ op availability). Refusals still render verbatim for anything else invalid
-- resolution: (batch 11) filter deleted + fork-only frames from position options (add/move/combine)
+- evidence: pure UI — the shared position dropdown lists every loaded frame. RAIL NOTE: ops are never hidden by frame state (guards speak), but this filters a DESTINATION list, not an op; same distinction as F-006 (card visibility ≠ op availability). Refusals still render verbatim for anything else invalid. FOUND AT IMPLEMENTATION: the dropdowns also offered the PREAMBLE, and "after p0" can ONLY refuse — state.ts add/move/combine all validate anchors via `this.frames.some(...)`, which the preamble is not part of ("--after target p0 does not exist"). Same class as Nil's report → folded in
+- resolution: batch 11: new pure helper positionAnchors() (ui/src/flags.ts) filters deleted + fork-only (strictly false) + preamble from BOTH position dropdowns (the shared param renderer in OpMenu.tsx and the combine panel's own in FrameView.tsx). Absorbed parts / split originals STAY — valid anchors by design (F-047: they keep their order-spine slot). Regressions: op-menu F-063 (both dropdowns offer exactly ["", "start", live main-thread ids]); ui:smoke add-dropdown options vs API-derived viable list (6 of 8 in the smoke store — preamble + tombstone excluded live)
 
 ## F-064 — Split: confusing form; children appear at the end with placeholder titles; original remains visible
 - reported: 2026-06-11 (Nil's "10.5") · class: design-question (display + engine metadata)

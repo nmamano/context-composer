@@ -206,6 +206,37 @@ try {
   }
   await shot(page, "frames");
 
+  // -- F-059c: the restart hint renders exactly when NO view annotation
+  //    exists (every inLastView null — the daemon-restart shape); any
+  //    established view hides it (API = oracle).
+  const viewEstablished = frames.some((f) => f.inLastView !== null);
+  const hintCount = await page.locator(".frames-hint").count();
+  check(
+    viewEstablished ? hintCount === 0 : hintCount === 1,
+    viewEstablished
+      ? "view annotations exist → no restart hint in the frame view"
+      : "no view annotations (restart shape) → frame view shows the hint",
+  );
+
+  // -- F-063: the add form's position dropdown offers only viable anchors —
+  //    deleted / fork-only / preamble excluded (API = oracle; the engine's
+  //    anchor lookup covers live turn frames, and fork-only is Nil's call).
+  await page.locator(".store-ops .op-add").click();
+  const viable = frames.filter(
+    (f) => f.kind !== "preamble" && !f.deleted && f.inLastView !== false,
+  );
+  const expectedAnchors = ["", "start", ...viable.map((f) => f.id)];
+  const anchorValues = await page
+    .locator('.op-form[data-op="add"] select option')
+    .evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
+  check(
+    JSON.stringify(anchorValues) === JSON.stringify(expectedAnchors),
+    `add position dropdown offers only viable anchors (${viable.length} of ${frames.length} frames)`,
+  );
+  await page
+    .locator('.op-form[data-op="add"] button:has-text("cancel")')
+    .click();
+
   // -- details panel for an offloaded frame: fileReference + source vs current
   const off = offloadedFrames[0]!;
   await page.locator(`.frame-card[data-frame-id="${off.id}"]`).click();

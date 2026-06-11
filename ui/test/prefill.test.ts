@@ -68,7 +68,102 @@ test("offload prefill falls back to the engine's literal fallback when the emiss
 });
 
 test("other verbs prefill nothing", () => {
-  for (const verb of ["edit", "retitle", "compact", "add"]) {
+  for (const verb of ["retitle", "add", "delete", "move", "split"]) {
     expect(opPrefill(opByVerb(verb)!, [frame()])).toEqual({});
   }
+});
+
+// --- F-061: compact opens with the offload chain (auto-summary ?? derive) ----
+
+const compact = opByVerb("compact")!;
+
+test("F-061: compact prefills text from the frame's auto-summary when present", () => {
+  expect(opPrefill(compact, [frame({ summary: "what this turn was about" })])).toEqual({
+    text: "what this turn was about",
+  });
+});
+
+test("F-061: compact falls back to the engine's deterministic derive over the CURRENT emission", () => {
+  expect(opPrefill(compact, [frame()])).toEqual({
+    text: "first line of the question",
+  });
+  const overridden = frame({
+    representation: [{ role: "user", content: "the override text" }],
+  });
+  expect(opPrefill(compact, [overridden])).toEqual({ text: "the override text" });
+});
+
+test("F-061: compact prefills NOTHING when no summary is derivable — no borrowed offload literal", () => {
+  const f = frame({
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu1", name: "Bash", input: {} }],
+      },
+    ],
+  });
+  expect(opPrefill(compact, [f])).toEqual({});
+});
+
+// --- F-060: edit prefills the current content — only when faithful ----------
+
+const edit = opByVerb("edit")!;
+
+test("F-060: edit prefills a single string-content message verbatim (unchanged submit reproduces it)", () => {
+  const f = frame({
+    messages: [{ role: "user", content: "the one and only\nmessage text" }],
+  });
+  expect(opPrefill(edit, [f])).toEqual({ text: "the one and only\nmessage text" });
+});
+
+test("F-060: edit reads the CURRENT emission — a representation wins over source messages", () => {
+  const f = frame({
+    representation: [{ role: "user", content: "the override text" }],
+  });
+  expect(opPrefill(edit, [f])).toEqual({ text: "the override text" });
+});
+
+test("F-060: a single message holding exactly one text block prefills its text", () => {
+  const f = frame({
+    messages: [{ role: "user", content: [{ type: "text", text: "block text" }] }],
+  });
+  expect(opPrefill(edit, [f])).toEqual({ text: "block text" });
+});
+
+test("F-060: multi-message emissions prefill NOTHING — flattening would silently restructure on submit", () => {
+  expect(opPrefill(edit, [frame()])).toEqual({}); // fixture: user + assistant
+});
+
+test("F-060: multi-block and non-text single messages prefill NOTHING", () => {
+  const mixed = frame({
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "text part" },
+          { type: "tool_use", id: "tu1", name: "Bash", input: {} },
+        ],
+      },
+    ],
+  });
+  expect(opPrefill(edit, [mixed])).toEqual({});
+  const toolOnly = frame({
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu1", content: "out" }],
+      },
+    ],
+  });
+  expect(opPrefill(edit, [toolOnly])).toEqual({});
+});
+
+test("F-060: a lone message whose role differs from the frame opener's role prefills NOTHING (edit would reassign it)", () => {
+  // edit --text writes {role: f.role, content} — prefill faithfulness
+  // requires the message to already carry that role.
+  const f = frame({
+    role: "user",
+    messages: [{ role: "assistant", content: "an assistant-authored line" }],
+  });
+  expect(opPrefill(edit, [f])).toEqual({});
 });
