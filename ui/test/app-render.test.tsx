@@ -22,6 +22,18 @@ const conversations = [
     active: true,
     suspicious: false,
   },
+  // F-057: a second, non-active conversation (empty — only identity matters).
+  {
+    id: "conv-2",
+    key: "k2",
+    turnFrames: 0,
+    totalTurnFrames: 0,
+    forkFrames: 0,
+    tokenEstimate: 0,
+    lastIngestAt: null,
+    active: false,
+    suspicious: false,
+  },
 ];
 
 const baseSummary = {
@@ -177,6 +189,14 @@ function stubFetch(input: RequestInfo | URL): Promise<Response> {
       }),
     );
   if (path.startsWith("/control/conversations")) return reply({ conversations });
+  // F-057: conv-2 serves empty data — the tests only exercise its identity.
+  if (path.includes("conv=conv-2")) {
+    if (path.startsWith("/control/list")) return reply({ conv: "conv-2", frames: [] });
+    if (path.startsWith("/control/compose"))
+      return reply({ ...composeMeta, conv: "conv-2", emittedFrameIds: [] });
+    if (path.startsWith("/control/history")) return reply({ conv: "conv-2", commits: [] });
+    if (path.startsWith("/control/timeline")) return reply({ conv: "conv-2", events: [] });
+  }
   if (path.startsWith("/control/list")) {
     if (!path.includes("conv=conv-1")) throw new Error(`list without explicit conv: ${path}`);
     return reply({ conv: "conv-1", frames });
@@ -545,4 +565,43 @@ test("F-015: details panel shows core fields by default; toggle reveals advanced
   await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
   expect(container.querySelector(".details-panel .chips-reserved")).not.toBeNull();
   await unmount();
+});
+
+// F-057 (Nil): a page reload reopens the conversation you were on — not the
+// engine's "active" default (which snapped him back to c3 mid-testing).
+test("F-057: selected conversation survives a reload; stale stored ids fall back to the default", async () => {
+  const setSelect = (el: HTMLSelectElement, value: string) => {
+    const proto = Object.getPrototypeOf(el) as object;
+    const desc = Object.getOwnPropertyDescriptor(proto, "value")!;
+    desc.set!.call(el, value);
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  try {
+    // First visit: the active default (conv-1) loads and is recorded.
+    const a = await renderApp();
+    const selA = a.container.querySelector(".conv-switcher") as HTMLSelectElement;
+    expect(selA.value).toBe("conv-1");
+    expect(window.localStorage.getItem("cc-ui-conv")).toBe("conv-1");
+    // Switching records the new conversation.
+    await a.act(async () => setSelect(selA, "conv-2"));
+    await flush(a.act);
+    expect(window.localStorage.getItem("cc-ui-conv")).toBe("conv-2");
+    await a.unmount();
+    // "Reload": a fresh App reopens conv-2, NOT the active default.
+    const b = await renderApp();
+    expect((b.container.querySelector(".conv-switcher") as HTMLSelectElement).value).toBe(
+      "conv-2",
+    );
+    await b.unmount();
+    // A stale stored id falls back to the active default (validated in
+    // loadConversation against the live conversations list).
+    window.localStorage.setItem("cc-ui-conv", "conv-99");
+    const c = await renderApp();
+    expect((c.container.querySelector(".conv-switcher") as HTMLSelectElement).value).toBe(
+      "conv-1",
+    );
+    await c.unmount();
+  } finally {
+    window.localStorage.removeItem("cc-ui-conv");
+  }
 });

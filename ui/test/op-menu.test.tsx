@@ -460,16 +460,20 @@ test("F-008/F-029: forms render next to their trigger — under the card, or und
   expect(
     container.querySelector(".frame-toolbar")!.nextElementSibling,
   ).toBe(toolbarHost);
-  // Switching views with the form still pending: it falls back to the top
-  // host — a pending form is never invisible.
+  // F-056 (Nil): navigating away CLOSES the pending form — no carry-over
+  // (replaces the old top-host fallback for view switches).
   const convTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
     (b) => b.textContent === "conversation",
   )!;
   await act(async () => click(convTab));
-  const topHost = container.querySelector(".op-form-host")!;
-  expect(topHost.classList.contains("toolbar")).toBe(false);
-  expect(topHost.closest(".frame-view")).toBeNull();
-  expect(container.querySelector('.op-form[data-op="add"]')).not.toBeNull();
+  expect(container.querySelector(".op-form-host")).toBeNull();
+  expect(container.querySelector('.op-form[data-op="add"]')).toBeNull();
+  // Coming back does not resurrect it either.
+  const framesTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+    (b) => b.textContent === "frames",
+  )!;
+  await act(async () => click(framesTab));
+  expect(container.querySelector(".op-form-host")).toBeNull();
 });
 
 test("every registry op with params declares only renderable kinds", () => {

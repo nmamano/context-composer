@@ -559,9 +559,31 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-055 — F-045's marker literal never matched live content (leading `*` from prose, wire sends plain `[SUGGESTION MODE:`)
 - reported: 2026-06-11 · class: bug
-- status: fixed@batch-F (reviewer-signed 2026-06-11: no blocking findings, focused 11/11; asterisk-strip accepted as within the F-045 exception; live waived — annotation-only)
+- status: fixed@299679b (batch F; reviewer-signed 2026-06-11: no blocking findings, focused 11/11; asterisk-strip accepted as within the F-045 exception; live waived — annotation-only)
 - what: "the last frame is a suggestion mode frame but it is not marked as fork-only"
 - where: conv c5, frame t6 (live store evidence: t6 first-40 chars = `[SUGGESTION MODE: Suggest what the user` with inLastView true; t2 false only via the OLD late path)
 - expected: F-045 marks it fork-only immediately
 - evidence: SUGGESTION_MARKER was `*[SUGGESTION MODE` — taken verbatim from Nil's original report phrasing ("starts with *[SUGGESTION MODE*"); the asterisks were emphasis/markdown, not wire content. Both live sightings (ba5a t6, c5 t2/t6) start with the plain bracket
 - resolution: batch F: marker literal corrected to `[SUGGESTION MODE`; matching now also strips optional LEADING asterisks after the whitespace trim (covers markdown-italic-wrapped variants; nothing wider — still an exact prefix check). Regression: fork-isolation "F-055" pins the exact live form verbatim + the italic variant. Lesson recorded: marker literals come from the WIRE (wiretap/store), never from prose
+
+
+## F-056 — Pending op form (e.g. add frame) should close when navigating away, not carry over
+- reported: 2026-06-11 (Nil's "9.1") · class: refinement
+- status: fixed@batch-10 (reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
+- what: "'add frame' menu should close automatically when navigating away from 'frames' view. not carry over."
+- where: any pending op form + view switching
+- expected: navigating to another view closes the pending form
+- evidence: pure UI — the old F-008/F-029 design carried pending forms to a top host on other views ("never invisible"); Nil's report supersedes that lean for view switches. The top host still serves same-view fallbacks (F-006 hiding the form's card)
+- resolution: in batch 10: switchView clears the pending op form; coming back does not resurrect it. Regression: op-menu placement test rewritten (form gone after switch, both directions).
+
+## F-057 — Page reload snaps back to the "active" conversation instead of the one being viewed
+- reported: 2026-06-11 (Nil's "9.2") · class: refinement
+- status: fixed@batch-10 (reviewer-signed 2026-06-11: no blocking findings, focused 25/25)
+- what: "why does context composer go back to session c3 when i reload the page? that's annoying"
+- where: conversation switcher / initial load
+- expected: reload reopens the conversation you were on
+- evidence: pure UI — the default pick is the engine's "active" ranking (most total turn frames → c3); the UI never remembered the selection. Engine ranking untouched (CLI default targeting keeps its semantics)
+- resolution: in batch 10: the UI stores the loaded conversation id (localStorage, single data path writes it) and the initial load passes it back; stale/unknown stored ids fall through to the active default; storage failures degrade silently. Regression: app-render "F-057" (record on switch, reopen on fresh mount, stale-id fallback).
+
+## UX-note — restart-reset of view annotations bit twice (no F-number, recorded for context)
+- 2026-06-11: after a daemon restart, inLastView resets to null until the next request re-establishes a view (by design — views are derived per request, never persisted; pinned since Phase 2.7). Surfaced as Nil's "show fork-only frames button does not even appear now, regression?" — not a regression; the toggle renders only when fork-only frames exist. If this keeps confusing, candidate refinement: an empty-state hint in the frames view after restart ("frame roles appear after the next message"). Not building unprompted.

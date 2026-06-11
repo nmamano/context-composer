@@ -117,6 +117,14 @@ export function App() {
           setError(null);
           return true; // the refetch landed — the store is just empty
         }
+        // F-057 (Nil): remember the conversation you were on — a page reload
+        // reopens it instead of snapping back to the "active" default.
+        // Validated above: a stale stored id falls through to the default.
+        try {
+          window.localStorage.setItem("cc-ui-conv", conv);
+        } catch {
+          /* storage unavailable (private mode etc.) — reload default applies */
+        }
         const [frames, compose, history, timeline] = await Promise.all([
           fetchFrames(conv),
           fetchComposeMeta(conv),
@@ -139,7 +147,15 @@ export function App() {
   );
 
   useEffect(() => {
-    void loadConversation();
+    // F-057: reopen the conversation from the last visit (null/stale → the
+    // active default inside loadConversation).
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem("cc-ui-conv");
+    } catch {
+      /* storage unavailable — default applies */
+    }
+    void loadConversation(stored);
   }, [loadConversation]);
 
   // On-focus refetch (5a refresh model: manual + on-focus).
@@ -193,10 +209,14 @@ export function App() {
     [runOp, loaded],
   );
 
-  /** F-014: tab switch with the details-selection stash (see state above). */
+  /** F-014: tab switch with the details-selection stash (see state above).
+   *  F-056 (Nil): a pending op form does NOT carry across views — navigating
+   *  away closes it (it used to fall back to the top host; the top host now
+   *  only serves same-view fallbacks, e.g. F-006 hiding the form's card). */
   const switchView = useCallback(
     (v: ViewMode) => {
       if (v === view) return;
+      setPendingOp(null);
       if (v === "history") {
         setStashedId(selectedId);
         setSelectedId(null);
