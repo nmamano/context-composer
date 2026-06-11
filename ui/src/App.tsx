@@ -278,9 +278,11 @@ export function App() {
   const addOp = opByVerb("add")!;
   const revertOp = opByVerb("revert")!;
   const combineOp = opByVerb("combine")!;
-  // F-067/F-068: the details panel dispatches these — same verbs, same routes.
+  // F-067/F-068/F-070: relocated entry points dispatch these — same verbs,
+  // same routes.
   const retitleOp = opByVerb("retitle")!;
   const editOp = opByVerb("edit")!;
+  const restoreOp = opByVerb("restore")!;
   const activeKey = (loaded && convs.find((c) => c.id === loaded.conv)?.key) || null;
 
   // F-008/F-029: where does the pending form live this render? Single-target
@@ -503,6 +505,8 @@ export function App() {
             }
             combineAfter={combineAfter}
             onCombineAfter={setCombineAfter}
+            // F-070: restore rides the offloaded chip (same op path).
+            onRestoreFrame={(id) => void runOp(restoreOp, [id], {})}
           />
         ) : (
           <HistoryView
@@ -542,6 +546,13 @@ export function App() {
             // {id, raw} body: the CURRENT emission with ONLY message i's text
             // replaced (replaceMessageText preserves every untouched byte and
             // the edited message's shape).
+            // F-070 (reviewer-required): replaced/history-inspection panels
+            // are read-only — restore withheld exactly like the others.
+            onRestore={
+              selectedReplaced
+                ? undefined
+                : () => void runOp(restoreOp, [selected.id], {})
+            }
             onEditMessage={
               selectedReplaced
                 ? undefined

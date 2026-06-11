@@ -41,6 +41,10 @@ export function FrameView(props: {
   onCombineAfter?: (v: string) => void;
   /** Zero-target op form (add) renders right under the toolbar. */
   toolbarForm?: ReactNode;
+  /** F-070 (Nil-decided, plan-gated): restore lives ON the offloaded chip —
+   *  the action attached to the state it undoes (the commit-card-revert
+   *  grammar), not a menu entry suppressed by state. */
+  onRestoreFrame?: (id: string) => void;
 }) {
   // F-064(1) (Nil: "they literally dont exist anymore after being replaced,
   // thats what replaced means"): structurally-replaced frames — combine parts
@@ -192,6 +196,22 @@ export function FrameView(props: {
                 {chips.map((c) => (
                   <li key={c.key} className={`chip chip-${c.key}`}>
                     {c.label}
+                    {/* F-070: the restore affordance rides the offloaded
+                        indicator itself; the daemon still judges (refusals
+                        verbatim on stale races). */}
+                    {c.key === "offloaded" && props.onRestoreFrame && (
+                      <button
+                        type="button"
+                        className="chip-restore"
+                        data-tip="bring this frame's full content back from the file"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onRestoreFrame!(f.id);
+                        }}
+                      >
+                        restore
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

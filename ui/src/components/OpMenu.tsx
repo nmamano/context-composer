@@ -42,12 +42,20 @@ const FORM_EXPLAINERS: Record<string, string> = {
     "Shrink what the model sees: this frame's content is replaced by a short summary in the conversation sent to the model. Undo from the history tab.",
 };
 
-/** F-067/F-068 (Nil-decided, plan-gated): ops RELOCATED to the details panel —
- *  same verbs, same routes, better-shaped entry points (title/summary edit in
- *  place; per-message editing). The verbs stay in the registry and the CLI
- *  untouched — the parity rail is registry↔CLI, and no UI-only verb may exist;
- *  the menu simply offers fewer entry points than the registry. */
-export const RELOCATED_TO_PANEL: ReadonlySet<string> = new Set(["edit", "retitle"]);
+/** F-067/F-068/F-070 (Nil-decided, plan-gated): ops RELOCATED out of the menu —
+ *  same verbs, same routes, better-shaped entry points: edit → per-message
+ *  pencils in the details panel; retitle → the panel's title/summary fields;
+ *  restore → a button ON the offloaded indicator itself (the card's chip and
+ *  the panel's fileReference row — the action lives where the state it undoes
+ *  is shown; reviewer-gated as a relocation, NOT a state-hiding exception).
+ *  The verbs stay in the registry and the CLI untouched — the parity rail is
+ *  registry↔CLI, and no UI-only verb may exist; the menu simply offers fewer
+ *  entry points than the registry. */
+export const RELOCATED_TO_PANEL: ReadonlySet<string> = new Set([
+  "edit",
+  "retitle",
+  "restore",
+]);
 
 /** The ops menu's verb list: every single-target registry op EXCEPT the
  *  panel-relocated ones. Exported so the menu-pin test asserts it exactly. */

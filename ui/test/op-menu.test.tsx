@@ -219,9 +219,10 @@ test("op menu is GENERATED from the registry minus the panel relocations (F-067/
   // Exactly the registry's single-target verbs MINUS the relocation list —
   // edit lives on the panel's messages, retitle on the panel's title/summary.
   expect(menuButtons).toEqual(menuOps().map((o) => o.verb));
-  expect(RELOCATED_TO_PANEL).toEqual(new Set(["edit", "retitle"]));
+  expect(RELOCATED_TO_PANEL).toEqual(new Set(["edit", "retitle", "restore"]));
   expect(menuButtons).not.toContain("edit");
   expect(menuButtons).not.toContain("retitle");
+  expect(menuButtons).not.toContain("restore"); // F-070: lives on the offloaded chip
   // No unregistered UI-only verb may appear (the parity rail's UI half).
   const registered = new Set(singleTargetOps().map((o) => o.verb));
   for (const v of menuButtons) expect(registered.has(v!)).toBe(true);
@@ -297,15 +298,16 @@ test("refusal renders the daemon's text VERBATIM, sticky until dismissed; refetc
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   refuse = {
-    route: "/control/restore",
+    route: "/control/delete",
     status: 400,
-    error: "frame f1 is not offloaded",
+    error: "frame f1 cannot be deleted right now",
   };
   const listBefore = getCounts["/control/list"] ?? 0;
-  const restore = container.querySelector(
-    '.op-menu[data-frame-id="f1"] button[data-verb="restore"]',
+  // delete: still a param-less MENU op (restore relocated to the chip, F-070).
+  const del = container.querySelector(
+    '.op-menu[data-frame-id="f1"] button[data-verb="delete"]',
   )!;
-  await act(async () => click(restore));
+  await act(async () => click(del));
   for (let i = 0; i < 4; i++) {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -313,9 +315,9 @@ test("refusal renders the daemon's text VERBATIM, sticky until dismissed; refetc
   }
   const banner = container.querySelector(".op-error-banner")!;
   expect(banner).not.toBeNull();
-  expect(banner.textContent).toContain("restore");
+  expect(banner.textContent).toContain("delete");
   expect(banner.textContent).toContain("f1");
-  expect(banner.textContent).toContain("frame f1 is not offloaded"); // verbatim
+  expect(banner.textContent).toContain("frame f1 cannot be deleted right now"); // verbatim
   // Refusal STILL refetches (state may have changed server-side regardless).
   expect(getCounts["/control/list"]).toBe(listBefore + 1);
   // Sticky: survives the successful refetch; cleared by manual dismiss.
@@ -326,10 +328,10 @@ test("refusal renders the daemon's text VERBATIM, sticky until dismissed; refetc
 test("next SUCCESSFUL op clears the sticky refusal", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
-  refuse = { route: "/control/restore", status: 400, error: "nope" };
+  refuse = { route: "/control/delete", status: 400, error: "nope" };
   await act(async () =>
     click(
-      container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="restore"]')!,
+      container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="delete"]')!,
     ),
   );
   for (let i = 0; i < 4; i++) {
@@ -939,4 +941,114 @@ test("F-072: regen buttons show in-flight state until the dispatch settles; both
   expect(after.disabled).toBe(false);
   expect(posts).toHaveLength(1);
   expect(posts[0]!.body).toEqual({ id: "f1", regen: true });
+});
+
+// ── F-070 (Nil-decided, plan-gated): restore rides the offloaded indicator ───
+
+test("F-070: restore is out of the menu; the offloaded chip carries it; non-offloaded frames have none anywhere", async () => {
+  const off = {
+    ...baseSummary,
+    id: "f3",
+    title: "parked",
+    tokenEstimate: 4,
+    offloaded: true,
+    overridden: true,
+    fileReference: "/tmp/frames/f3-abc.md",
+  };
+  frames.push(off as unknown as (typeof frames)[number]);
+  shows.f3 = {
+    ...baseFrame,
+    id: "f3",
+    title: "parked",
+    tokenEstimate: 4,
+    offloaded: true,
+    fileReference: "/tmp/frames/f3-abc.md",
+    representation: [{ role: "user", content: "[offloaded] stub" }],
+    messages: [{ role: "user", content: "the original long content" }],
+  };
+  try {
+    const { container, act } = await renderApp();
+    await openFrameView(container, act);
+    // Menu: restore relocated (registry/CLI keep the verb — parity intact).
+    expect(RELOCATED_TO_PANEL).toEqual(new Set(["edit", "retitle", "restore"]));
+    const verbs = Array.from(
+      container.querySelectorAll('.op-menu[data-frame-id="f3"] button[data-verb]'),
+    ).map((b) => b.getAttribute("data-verb"));
+    expect(verbs).not.toContain("restore");
+    // The offloaded chip carries the button; clean frames carry none anywhere.
+    const chipBtn = container.querySelector(
+      '.frame-card[data-frame-id="f3"] .chip-offloaded .chip-restore',
+    )!;
+    expect(chipBtn).not.toBeNull();
+    expect(container.querySelector('.frame-card[data-frame-id="f1"] .chip-restore')).toBeNull();
+    expect(container.querySelector('.frame-card[data-frame-id="f2"] .chip-restore')).toBeNull();
+    // Click dispatches the registry restore body through the common op path.
+    await act(async () => click(chipBtn));
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.path.startsWith("/control/restore?conv=conv-1")).toBe(true);
+    expect(posts[0]!.body).toEqual({ id: "f3" });
+    // The panel's fileReference row carries it too…
+    await act(async () => click(container.querySelector('.frame-card[data-frame-id="f3"]')!));
+    const panel = container.querySelector(".details-panel")!;
+    const rowBtn = panel.querySelector(".row-restore")!;
+    expect(rowBtn).not.toBeNull();
+    // …with a refusal rendering verbatim through the standing banner.
+    refuse = { route: "/control/restore", status: 400, error: "frame f3 is not offloaded" };
+    await act(async () => click(rowBtn));
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    expect(container.querySelector(".op-error-banner")!.textContent).toContain(
+      "frame f3 is not offloaded",
+    );
+  } finally {
+    frames.splice(2);
+    delete shows.f3;
+  }
+});
+
+test("F-070 (reviewer adjustment): a replaced+offloaded frame inspected via history gets NO restore affordance", async () => {
+  const f1 = frames[0]! as { absorbedInto: string | null; offloaded: boolean; fileReference: string | null };
+  f1.absorbedInto = "f9";
+  f1.offloaded = true;
+  f1.fileReference = "/tmp/frames/f1-old.md";
+  (shows.f1 as Record<string, unknown>).offloaded = true;
+  (shows.f1 as Record<string, unknown>).fileReference = "/tmp/frames/f1-old.md";
+  history.push({
+    id: "c9",
+    type: "combine",
+    affectedFrameIds: ["f1"],
+    params: {},
+    note: null,
+    branchId: null,
+    parentCommitId: null,
+    timestamp: "t9",
+  });
+  try {
+    const { container, act } = await renderApp();
+    const historyTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+      (b) => b.textContent === "history",
+    )!;
+    await act(async () => click(historyTab));
+    await act(async () => click(container.querySelector("button.frame-link")!));
+    const panel = container.querySelector(".details-panel")!;
+    expect(panel).not.toBeNull();
+    // fileReference row visible (inspection)… but read-only: no restore.
+    expect(panel.textContent).toContain("/tmp/frames/f1-old.md");
+    expect(panel.querySelector(".row-restore")).toBeNull();
+  } finally {
+    f1.absorbedInto = null;
+    f1.offloaded = false;
+    f1.fileReference = null;
+    (shows.f1 as Record<string, unknown>).offloaded = false;
+    (shows.f1 as Record<string, unknown>).fileReference = null;
+    history.splice(0);
+  }
 });

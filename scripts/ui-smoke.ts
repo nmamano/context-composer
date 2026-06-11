@@ -410,7 +410,8 @@ try {
     afterOffload.offloaded && !!afterOffload.fileReference,
     `offload ${C.id} produced a fileReference (API oracle)`,
   );
-  await openMenuAndPick(C.id, "restore");
+  // F-070: restore relocated — the button rides the offloaded chip itself.
+  await page.locator(`.frame-card[data-frame-id="${C.id}"] .chip-restore`).click();
   await page.waitForSelector(
     `.frame-card[data-frame-id="${C.id}"] .chip-offloaded`,
     { state: "detached" },

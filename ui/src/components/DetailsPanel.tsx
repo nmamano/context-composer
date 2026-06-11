@@ -234,6 +234,10 @@ export function DetailsPanel(props: {
   onRetitle?: (values: RetitleValues) => Promise<void> | void;
   /** F-068: per-message edit — App builds the {raw} body and POSTs edit. */
   onEditMessage?: (index: number, text: string) => void;
+  /** F-070: restore rides the fileReference row (the offloaded state's home in
+   *  this panel). App withholds it for replaced/history-inspection frames —
+   *  the batch-13 read-only rule (reviewer-required adjustment). */
+  onRestore?: () => void;
 }) {
   const f = props.frame;
   const overridden = f.representation != null;
@@ -379,7 +383,21 @@ export function DetailsPanel(props: {
         {visible.map((row) => (
           <div key={row.label} className="details-row">
             <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
+            <dd>
+              {row.value}
+              {/* F-070: restore lives where the offload's state shows — the
+                  fileReference row (non-null only while offloaded). */}
+              {row.label === "fileReference" && props.onRestore && (
+                <button
+                  type="button"
+                  className="row-restore"
+                  data-tip="bring this frame's full content back from the file"
+                  onClick={() => props.onRestore?.()}
+                >
+                  restore
+                </button>
+              )}
+            </dd>
           </div>
         ))}
       </dl>
