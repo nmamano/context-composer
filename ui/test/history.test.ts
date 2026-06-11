@@ -88,21 +88,24 @@ describe("commitRows", () => {
 describe("eventRows", () => {
   test("maps public events including null commitId (captures)", () => {
     const events: PublicEvent[] = [
-      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null },
-      { id: "e2", type: "delete", frameIds: ["t1"], commitId: "c1", timestamp: "ts2", note: null },
+      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null, direction: "request" },
+      { id: "e2", type: "delete", frameIds: ["t1"], commitId: "c1", timestamp: "ts2", note: null, direction: null },
     ];
     const rows = eventRows(events);
     expect(rows).toHaveLength(2);
     expect(rows[0]!.commitId).toBeNull();
     expect(rows[1]!.commitId).toBe("c1");
+    // F-052: the capture subtype is carried through (null on non-capture).
+    expect(rows[0]!.direction).toBe("request");
+    expect(rows[1]!.direction).toBeNull();
   });
 
   // F-050: the daemon's per-event note must survive the mapping (the
   // enriched event carries its provenance there).
   test("F-050: note is carried through (null when absent)", () => {
     const events: PublicEvent[] = [
-      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null },
-      { id: "e2", type: "enriched", frameIds: ["t1"], commitId: null, timestamp: "ts2", note: "title+summary via claude-cli:claude-sonnet-4-6@low" },
+      { id: "e1", type: "capture", frameIds: ["t1"], commitId: null, timestamp: "ts1", note: null, direction: "reply" },
+      { id: "e2", type: "enriched", frameIds: ["t1"], commitId: null, timestamp: "ts2", note: "title+summary via claude-cli:claude-sonnet-4-6@low", direction: null },
     ];
     const rows = eventRows(events);
     expect(rows[0]!.note).toBeNull();

@@ -77,6 +77,9 @@ function publicEvent(e: ContextEvent) {
     // Engine batch A audit detail (e.g. enriched: fields + provider label).
     // Found by the live check: the explicit mapper silently dropped it.
     note: e.note ?? null,
+    // F-052: capture subtype (request|reply); null on non-capture and on
+    // events recorded before the field existed.
+    direction: e.direction ?? null,
   };
 }
 

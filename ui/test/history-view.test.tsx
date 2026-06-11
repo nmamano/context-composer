@@ -101,10 +101,15 @@ const history = [
 ];
 
 const timeline = [
+  // F-052: e1 is a LEGACY capture (no direction) — must render exactly as
+  // before: no subtype span, no tooltip.
   { id: "e1", type: "capture", frameIds: ["f1"], commitId: null, timestamp: "ts0", note: null },
   { id: "e2", type: "retitle", frameIds: ["f1"], commitId: "c1", timestamp: "ts1", note: null },
   // F-050: the enriched event carries its provenance in `note`.
   { id: "e3", type: "enriched", frameIds: ["f1"], commitId: null, timestamp: "ts2", note: "title+summary via claude-cli:claude-sonnet-4-6@low" },
+  // F-052: the two capture subtypes the daemon reports.
+  { id: "e4", type: "capture", frameIds: ["f1"], commitId: null, timestamp: "ts3", note: null, direction: "request" },
+  { id: "e5", type: "capture", frameIds: ["f1"], commitId: null, timestamp: "ts4", note: null, direction: "reply" },
 ];
 
 interface PostRecord { path: string; body: Record<string, unknown> }
@@ -299,7 +304,7 @@ test("timeline sub-toggle lists events (captures included) with commit links, ch
   ).find((b) => (b.textContent ?? "").startsWith("timeline"))!;
   await act(async () => click(tlTab));
   const rows = Array.from(container.querySelectorAll(".event-row"));
-  expect(rows.map((r) => r.getAttribute("data-event-id"))).toEqual(["e1", "e2", "e3"]);
+  expect(rows.map((r) => r.getAttribute("data-event-id"))).toEqual(["e1", "e2", "e3", "e4", "e5"]);
   expect(rows[0]!.textContent).toContain("capture");
   expect(rows[1]!.textContent).toContain("c1");
 });
@@ -326,4 +331,37 @@ test("F-050: enriched event renders its note and a plain-language tooltip", asyn
   const capture = container.querySelector('.event-row[data-event-id="e1"]')!;
   expect(capture.querySelector(".event-type")!.getAttribute("data-tip")).toBeNull();
   expect(capture.querySelector(".event-note")).toBeNull();
+});
+
+// F-052: capture subtypes (request|reply) render visibly and explain
+// themselves on hover; legacy captures without a direction are untouched.
+test("F-052: capture subtypes get a label + plain-language tooltip; legacy capture unchanged", async () => {
+  const { container, act } = await renderApp();
+  await openHistory(container, act);
+  const tlTab = Array.from(
+    container.querySelectorAll(".history-subtoggle button"),
+  ).find((b) => (b.textContent ?? "").startsWith("timeline"))!;
+  await act(async () => click(tlTab));
+
+  const req = container.querySelector('.event-row[data-event-id="e4"]')!;
+  expect(req.querySelector(".event-direction")!.textContent).toBe("request");
+  const reqTip = req.querySelector(".event-type")!.getAttribute("data-tip")!;
+  expect(reqTip.length).toBeGreaterThan(0);
+
+  const rep = container.querySelector('.event-row[data-event-id="e5"]')!;
+  expect(rep.querySelector(".event-direction")!.textContent).toBe("reply");
+  const repTip = rep.querySelector(".event-type")!.getAttribute("data-tip")!;
+  expect(repTip.length).toBeGreaterThan(0);
+  expect(repTip).not.toBe(reqTip); // the two subtypes explain different things
+
+  for (const tip of [reqTip, repTip]) {
+    for (const word of ["emission", "audit", "registry", "arity"]) {
+      expect(tip.toLowerCase()).not.toContain(word);
+    }
+  }
+
+  // Legacy capture (no direction): no subtype span, no tooltip — exactly as before.
+  const legacy = container.querySelector('.event-row[data-event-id="e1"]')!;
+  expect(legacy.querySelector(".event-direction")).toBeNull();
+  expect(legacy.querySelector(".event-type")!.getAttribute("data-tip")).toBeNull();
 });

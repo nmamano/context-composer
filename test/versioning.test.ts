@@ -382,3 +382,30 @@ test("acceptance: restart → list → delete → history → restart → revert
     stub.stop();
   }
 });
+
+// ── F-052: capture events carry their subtype (request|reply) ─────────────────
+// Nil's pick (option b): one additive `direction` detail on CAPTURE events only.
+// request = an arriving request created/changed frames; reply = the streamed
+// assistant answer was appended. Other event types never carry it; events
+// recorded before the field render as plain capture (additive, no migration).
+
+test("F-052: request-capture and reply-capture carry direction; ops carry none", () => {
+  const s = reopen();
+  const v = s.ingest({ ...KNOBS, ...HEAD, messages: [userA] });
+  s.captureAssistant(
+    { message: { role: "assistant", content: [{ type: "text", text: "4" }] }, stopReason: "end_turn" },
+    v.openFrameId,
+  );
+  s.delete(["t1"]);
+
+  const tl = s.timeline();
+  expect(tl.map((e) => e.type)).toEqual(["capture", "capture", "delete"]);
+  expect(tl[0]!.direction).toBe("request"); // ingest side
+  expect(tl[1]!.direction).toBe("reply"); // assistant side
+  expect(tl[1]!.frameIds).toEqual(["t1"]);
+  expect(tl[2]!.direction).toBeUndefined(); // ops never carry it
+
+  // Durable: the subtype survives a restart like any other event field.
+  const s2 = reopen();
+  expect(s2.timeline().map((e) => e.direction)).toEqual(["request", "reply", undefined]);
+});

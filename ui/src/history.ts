@@ -66,6 +66,10 @@ export interface EventRow {
   /** F-050: the event's own annotation (e.g. how a frame was enriched) —
    *  reported by the daemon; the view must not drop it. */
   note: string | null;
+  /** F-052: capture subtype reported by the daemon (request|reply); null on
+   *  non-capture events and on events recorded before the field existed —
+   *  those render exactly as before. */
+  direction: "request" | "reply" | null;
 }
 
 export function eventRows(events: PublicEvent[]): EventRow[] {
@@ -76,5 +80,6 @@ export function eventRows(events: PublicEvent[]): EventRow[] {
     commitId: e.commitId ?? null,
     timestamp: e.timestamp,
     note: e.note ?? null,
+    direction: e.direction ?? null,
   }));
 }

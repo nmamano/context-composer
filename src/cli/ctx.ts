@@ -380,6 +380,7 @@ async function cmdTimeline(_args: string[]): Promise<void> {
       frameIds: string[];
       commitId: string | null;
       timestamp: string;
+      direction?: "request" | "reply" | null;
     }>;
   };
   if (events.length === 0) {
@@ -388,8 +389,11 @@ async function cmdTimeline(_args: string[]): Promise<void> {
   }
   for (const e of events) {
     const commit = e.commitId ? ` (${e.commitId})` : "";
+    // F-052: capture subtype in the type column (display-only; events
+    // without a direction render exactly as before).
+    const type = e.direction ? `${e.type}:${e.direction}` : e.type;
     console.log(
-      `${e.id.padEnd(4)} ${e.type.padEnd(8)} ${e.frameIds.join(",").padEnd(10)}${commit}  ${e.timestamp}`,
+      `${e.id.padEnd(4)} ${type.padEnd(15)} ${e.frameIds.join(",").padEnd(10)}${commit}  ${e.timestamp}`,
     );
   }
 }

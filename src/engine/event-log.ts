@@ -36,6 +36,12 @@ export interface ContextEvent {
   /** Optional audit detail (e.g. `enriched`: which fields + provider/model —
    *  never raw prompt/output). Additive; absent on older snapshots. */
   note?: string | null;
+  /** F-052 (Nil option b): capture subtype — `request` = an arriving request
+   *  created/changed these frames; `reply` = the model's streamed answer was
+   *  appended to the open frame. CAPTURE EVENTS ONLY; other types never carry
+   *  it. Additive; absent on older snapshots (consumers render those as
+   *  plain `capture`, exactly as before). */
+  direction?: "request" | "reply";
 }
 
 export class EventLog {

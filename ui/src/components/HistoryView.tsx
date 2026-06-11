@@ -153,15 +153,27 @@ export function HistoryView(props: {
             <span className="event-id">{e.id}</span>
             <span
               className={`event-type event-type-${e.type}`}
-              // F-050: the one non-obvious type explains itself in plain words.
+              // F-050/F-052: non-obvious types explain themselves in plain
+              // words — enriched, and the two capture subtypes the daemon
+              // reports (Nil). Legacy capture events without a direction
+              // render exactly as before (no tip, no suffix).
               data-tip={
                 e.type === "enriched"
                   ? "a title and summary were written for this frame automatically"
-                  : undefined
+                  : e.direction === "request"
+                    ? "the app sent the conversation to the model — anything new or changed is recorded here"
+                    : e.direction === "reply"
+                      ? "the model's answer arrived and was added to the frame"
+                      : undefined
               }
             >
               {e.type}
             </span>
+            {e.direction && (
+              <span className={`event-direction event-direction-${e.direction}`}>
+                {e.direction}
+              </span>
+            )}
             <span className="event-frames">
               {e.frameIds.map((id) => (
                 <FrameLink

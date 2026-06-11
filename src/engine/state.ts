@@ -247,7 +247,8 @@ export class FrameStore {
     // frames separately. Do not unify the two.
     const affected = [...created.map((f) => f.id), ...grown];
     if (affected.length > 0) {
-      const event = this.recordEvent("capture", affected);
+      // F-052: request-side capture — an arriving request created/changed these.
+      const event = this.recordEvent("capture", affected, null, null, "request");
       for (const f of created) f.createdEventId = event.id;
     }
 
@@ -393,7 +394,8 @@ export class FrameStore {
     target.modifiedAt = ++this.seq;
     // The assistant's reply arriving is also the context being shaped — a capture event,
     // not a commit. Keeps the timeline complete without polluting the op log.
-    this.recordEvent("capture", [target.id]);
+    // F-052: reply-side capture.
+    this.recordEvent("capture", [target.id], null, null, "reply");
     this.persist();
   }
 
@@ -1335,6 +1337,9 @@ export class FrameStore {
     frameIds: string[],
     commitId: string | null = null,
     note: string | null = null,
+    // F-052: capture subtype (request|reply); pass ONLY from the two capture
+    // sites — every other event type leaves it unset.
+    direction: "request" | "reply" | null = null,
   ): ContextEvent {
     const event: ContextEvent = {
       id: `e${++this.eventCounter}`,
@@ -1344,6 +1349,7 @@ export class FrameStore {
       seq: ++this.seq,
       timestamp: new Date().toISOString(),
       ...(note !== null ? { note } : {}),
+      ...(direction !== null ? { direction } : {}),
     };
     this.events.append(event);
     return event;

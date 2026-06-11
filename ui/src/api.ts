@@ -87,6 +87,8 @@ export interface PublicEvent {
   timestamp: string;
   /** Audit detail (engine batch A: enriched events carry fields + provider). */
   note: string | null;
+  /** F-052: capture subtype; null on non-capture / pre-field events. */
+  direction: "request" | "reply" | null;
 }
 
 export async function fetchHistory(conv: string): Promise<PublicCommit[]> {

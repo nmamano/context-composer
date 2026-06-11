@@ -369,6 +369,17 @@ test("proxy: a captured turn gets enriched asynchronously; timeline audits it", 
     expect((enriched[0] as { note?: string | null }).note).toContain(
       "via stub:sonnet@low",
     );
+    // F-052: the capture subtype survives the mapper too (same lesson) —
+    // request + reply captures carry it, enriched carries null.
+    const tlAll = (await (await fetch(`${base}/control/timeline`)).json()) as {
+      events: Array<{ type: string; direction: string | null }>;
+    };
+    const dirs = tlAll.events.filter((e) => e.type === "capture").map((e) => e.direction);
+    expect(dirs).toContain("request");
+    expect(dirs).toContain("reply");
+    expect(
+      (tlAll.events.find((e) => e.type === "enriched") as { direction: string | null }).direction,
+    ).toBeNull();
     const list = (await (await fetch(`${base}/control/list`)).json()) as {
       frames: Array<{ id: string; title: string; summary: string | null }>;
     };
