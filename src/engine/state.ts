@@ -95,6 +95,41 @@ export type RepInput = { text: string } | { raw: WireMessage[] };
  *  the engine's single authorized content heuristic — do not generalize). */
 const SUGGESTION_MARKER = "*[SUGGESTION MODE";
 
+/** F-053 (Phase 5e, Nil-authorized 2026-06-10; reviewer-gated): brittle
+ *  exception #2 to the locked "no content heuristics" principle. Claude Code
+ *  embeds an `x-anthropic-billing-header: ...; cch=...;` line in the system
+ *  text whose cch value is rewritten per request by the client's HTTP layer
+ *  (a per-request attestation token — CC source confirmed via the office CC
+ *  Expert). That made the preamble look "grown" on EVERY request, flooding
+ *  the timeline with p0 capture entries and defeating the no-change→no-event
+ *  suppression. This strips lines starting with the exact literal below when
+ *  computing the PREAMBLE's change-detection signature — and NOWHERE else:
+ *  stored p0 stays byte-faithful to the latest resend (the attestation line
+ *  keeps riding the wire — it is the client's attestation), turn frames never
+ *  normalize, compose/tokens untouched. Graceful degradation: if the client
+ *  renames the header, behavior degrades to today's noise. Do not generalize. */
+const VOLATILE_HEADER_PREFIX = "x-anthropic-billing-header:";
+
+function stripVolatileHeaderLines<T>(system: T): T {
+  const stripText = (t: string) =>
+    t
+      .split("\n")
+      .filter((l) => !l.startsWith(VOLATILE_HEADER_PREFIX))
+      .join("\n");
+  if (typeof system === "string") return stripText(system) as unknown as T;
+  if (Array.isArray(system)) {
+    return system.map((b) =>
+      b &&
+      typeof b === "object" &&
+      (b as { type?: unknown }).type === "text" &&
+      typeof (b as { text?: unknown }).text === "string"
+        ? { ...(b as object), text: stripText((b as { text: string }).text) }
+        : b,
+    ) as unknown as T;
+  }
+  return system;
+}
+
 function opensWithSuggestionMarker(f: Frame): boolean {
   const first = f.messages[0];
   if (!first) return false;
@@ -289,12 +324,16 @@ export class FrameStore {
   }
 
   /** Normalized content signature of a frame (cache_control stripped, deterministic
-   *  bytes) — used only to tell a real content change from a no-op resend. */
+   *  bytes) — used only to tell a real content change from a no-op resend.
+   *  F-053: the PREAMBLE signature additionally ignores the client's volatile
+   *  billing-header line (see stripVolatileHeaderLines) — signature ONLY;
+   *  stored content stays byte-faithful and turn frames never normalize. */
   private contentSig(f: Frame): string {
     const payload =
       f.kind === "preamble"
         ? {
-            system: f.system ?? null,
+            system:
+              f.system != null ? stripVolatileHeaderLines(f.system) : null,
             tools: f.tools ?? null,
             injectedSystem: f.injectedSystem ?? null,
           }

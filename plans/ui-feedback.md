@@ -518,7 +518,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-052 — Request-arrival and reply-arrival events share the name "capture" — distinct names?
 - reported: 2026-06-10 · class: design-question
-- status: fixed@batch-C (reviewer-signed 2026-06-11: no blocking findings, focused 58/58; all gates incl. live — demo/live-e2e/live-phase2 PASS under Nil's standing quota grant; reviewer nuance recorded: CLI legacy rows semantically unchanged but type-column spacing widened 8→15, not byte-identical — UI legacy IS pinned unchanged)
+- status: fixed@6c5072b (batch C; reviewer-signed 2026-06-11: no blocking findings, focused 58/58; all gates incl. live — demo/live-e2e/live-phase2 PASS under Nil's standing quota grant; reviewer nuance recorded: CLI legacy rows semantically unchanged but type-column spacing widened 8→15, not byte-identical — UI legacy IS pinned unchanged)
 - what: "Two different things get logged as capture ... shouldn't they have different names then?"
 - where: engine event types (state.ts recordEvent), /control/timeline, CLI timeline, UI timeline rows
 - expected: TBD by Nil — event type vocabulary is engine truth (persisted in the store, shared by CLI and UI), so this is not a display-only rename
@@ -530,7 +530,9 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-053 — p0 "grows" on every request: a volatile billing line in the resent system prompt
 - reported: 2026-06-10 (found while answering Nil's F-051 follow-up) · class: design-question
-- status: plan-gate GO 2026-06-10 (boundaries: preamble signature ONLY — never turn frames/stored content/compose/tokens; exact line-prefix after line split; stored p0 stays byte-faithful incl. the volatile line; real head changes still audit; comment as Nil-authorized brittle exception #2; extra required test: after a cch-only resend, show(p0) reflects the NEWER header while NO capture event was recorded; live gates waived, no dual-client). Implementation queued behind batch C's commit (same state.ts), then F-053 as its own small batch, then F-047 — reviewer-confirmed order
+- status: fixed@batch-D (reviewer-signed 2026-06-11: no blocking findings, focused 23/23; live waived — detection-only)
+- plan-gate boundaries (GO 2026-06-10): preamble signature ONLY — never turn frames/stored content/compose/tokens; exact line-prefix after line split; stored p0 stays byte-faithful incl. the volatile line; real head changes still audit; comment as Nil-authorized brittle exception #2; extra required test: after a cch-only resend, show(p0) reflects the NEWER header while NO capture event was recorded; live gates waived, no dual-client
+- implementation (batch D): stripVolatileHeaderLines() drops lines starting with the exact literal `x-anthropic-billing-header:` (string + block-array system forms) inside contentSig's PREAMBLE branch only. Regressions (versioning.test.ts, 5): cch-only rotation → no event + p0 stores the NEWER line (reviewer's required assert); real system edit still audits p0; turn growth lists the turn frame not p0; mid-line mention still counts; block-array form normalizes identically
 - what: every request's capture event lists p0 — investigation showed the engine rule is "created or content-changed only", so p0 appearing every time means its content really changes every request
 - where: engine ingest (preamble refresh + grown detection); visible as timeline noise (F-051)
 - expected: TBD by Nil

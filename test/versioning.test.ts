@@ -409,3 +409,82 @@ test("F-052: request-capture and reply-capture carry direction; ops carry none",
   const s2 = reopen();
   expect(s2.timeline().map((e) => e.direction)).toEqual(["request", "reply", undefined]);
 });
+
+// ── F-053: the volatile billing line no longer counts as preamble growth ──────
+// Nil-authorized brittle exception #2 (2026-06-10): CC's HTTP layer rewrites a
+// per-request attestation token (`cch=`) inside an `x-anthropic-billing-header:`
+// line in the system text. SIGNATURE-ONLY normalization — stored p0 stays
+// byte-faithful; real head changes still audit; turn frames never normalize.
+
+const sysWithCch = (cch: string, extra = "") =>
+  `SYS PROMPT${extra}\nx-anthropic-billing-header: cc_version=2.1.170; cch=${cch};`;
+
+test("F-053: cch-only rotation records NO event — while stored p0 keeps the NEWER line", () => {
+  const s = reopen();
+  s.ingest({ ...KNOBS, ...HEAD, system: sysWithCch("aaaaa"), messages: [userA] });
+  expect(s.timeline()).toHaveLength(1); // the initial capture (created p0+t1)
+
+  // Identical resend except the rotated attestation value.
+  s.ingest({ ...KNOBS, ...HEAD, system: sysWithCch("bbbbb"), messages: [userA] });
+  expect(s.timeline()).toHaveLength(1); // suppression works again — no new event
+
+  // Reviewer's required boundary: signature-only, storage FAITHFUL — p0
+  // reflects the newer raw header even though no event was recorded.
+  const p0 = s.show("p0")!;
+  expect(JSON.stringify(p0.system)).toContain("cch=bbbbb");
+  expect(JSON.stringify(p0.system)).not.toContain("cch=aaaaa");
+});
+
+test("F-053: a REAL system change still audits p0 (even with the cch also rotating)", () => {
+  const s = reopen();
+  s.ingest({ ...KNOBS, ...HEAD, system: sysWithCch("aaaaa"), messages: [userA] });
+  s.ingest({
+    ...KNOBS,
+    ...HEAD,
+    system: sysWithCch("bbbbb", " — now meaningfully edited"),
+    messages: [userA],
+  });
+  const tl = s.timeline();
+  expect(tl).toHaveLength(2);
+  expect(tl[1]!.frameIds).toContain("p0"); // the real head change is audited
+});
+
+test("F-053: turn growth with a rotating cch lists the turn frame, NOT p0", () => {
+  const s = reopen();
+  s.ingest({ ...KNOBS, ...HEAD, system: sysWithCch("aaaaa"), messages: [userA] });
+  s.ingest({
+    ...KNOBS,
+    ...HEAD,
+    system: sysWithCch("bbbbb"),
+    messages: [userA, { role: "assistant", content: "4" }],
+  });
+  const tl = s.timeline();
+  expect(tl).toHaveLength(2);
+  expect(tl[1]!.frameIds).toEqual(["t1"]); // grown turn audited; p0 stays quiet
+});
+
+test("F-053: exact line-prefix only — a mid-line mention still counts as a change", () => {
+  const s = reopen();
+  s.ingest({ ...KNOBS, ...HEAD, system: sysWithCch("aaaaa"), messages: [userA] });
+  s.ingest({
+    ...KNOBS,
+    ...HEAD,
+    system: `${sysWithCch("aaaaa")}\nsee x-anthropic-billing-header: docs for details`,
+    messages: [userA],
+  });
+  expect(s.timeline()).toHaveLength(2); // the added line is REAL content
+  expect(s.timeline()[1]!.frameIds).toContain("p0");
+});
+
+test("F-053: block-array system form normalizes the same way", () => {
+  const s = reopen();
+  const blocks = (cch: string) => [
+    { type: "text", text: `x-anthropic-billing-header: cc_version=2.1.170; cch=${cch};` },
+    { type: "text", text: "SYS PROMPT" },
+  ];
+  s.ingest({ ...KNOBS, ...HEAD, system: blocks("aaaaa"), messages: [userA] });
+  const n = s.timeline().length;
+  s.ingest({ ...KNOBS, ...HEAD, system: blocks("bbbbb"), messages: [userA] });
+  expect(s.timeline()).toHaveLength(n); // rotation alone: no event
+  expect(JSON.stringify(s.show("p0")!.system)).toContain("cch=bbbbb"); // faithful
+});
