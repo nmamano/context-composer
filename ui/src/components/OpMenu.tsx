@@ -54,10 +54,18 @@ export const RELOCATED_TO_PANEL: ReadonlySet<string> = new Set(["edit", "retitle
 export const menuOps = (): OpSpec[] =>
   singleTargetOps().filter((o) => !RELOCATED_TO_PANEL.has(o.verb));
 
-/** F-065 (corrected truth): per-menu-item tooltips where a verb confused Nil.
- *  summarize is a WIRE op — it swaps tool results inside the frame for a
- *  summary; it does NOT touch the card's title/summary (that's the panel). */
+/** F-065/F-073 (Nil: "add a tool tip for every operation"): plain-language
+ *  tips for EVERY menu verb — what it does to what the model sees, no jargon
+ *  (the F-028 ban applies; pinned in test). summarize's states the corrected
+ *  truth: a WIRE op on tool results, not the card's title/summary. */
 const MENU_TIPS: Record<string, string> = {
+  delete: "remove this frame from what the model sees — undo from the history tab",
+  compact: "swap this frame's whole content for a short summary (the model sees less)",
+  offload: "park this frame's content in a file; a short note takes its place",
+  restore: "bring an offloaded frame's full content back",
+  move: "change where this frame sits in the conversation",
+  split: "cut this frame into smaller frames",
+  strip: "drop bulky tool results inside this frame",
   summarize:
     "swap chosen tool results inside this frame for a short summary the model sees instead",
 };

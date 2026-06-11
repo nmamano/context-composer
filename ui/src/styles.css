@@ -64,9 +64,15 @@ body {
 .refresh[data-tip]:hover::after,
 .copy-key[data-tip]:hover::after,
 .op-menu summary[data-tip]:hover::after,
-.details-panel .close[data-tip]:hover::after,
 .commit-revert[data-tip]:hover::after,
 .jump-bottom[data-tip]:hover::after { left: auto; right: 0; }
+/* F-071: the details panel hugs the right viewport edge — EVERY tip inside it
+   anchors right so it can't clip offscreen (covers the F-067/F-068 icons, the
+   close button, the fields toggle, read-only message markers). */
+.details-panel [data-tip]:hover::after { left: auto; right: 0; }
+/* F-073: menu-item tips render against the side panel when it's open — anchor
+   them to the button's right edge so they extend left, never under the panel. */
+.op-menu ul button[data-tip]:hover::after { left: auto; right: 100%; margin-right: 6px; top: 0; bottom: auto; }
 /* F-009: selectable + copyable conversation identity. */
 .conv-key { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
 .conv-key code { font-family: ui-monospace, monospace; user-select: all; }

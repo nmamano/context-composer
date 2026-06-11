@@ -534,7 +534,9 @@ export function App() {
             onRetitle={
               selectedReplaced
                 ? undefined
-                : (values) => void runOp(retitleOp, [selected.id], values)
+                : // Returns the dispatch promise — the panel's regen buttons
+                  // hold their in-flight state on it (F-072).
+                  (values) => runOp(retitleOp, [selected.id], values)
             }
             // F-068: per-message editing — the edit verb with a programmatic
             // {id, raw} body: the CURRENT emission with ONLY message i's text

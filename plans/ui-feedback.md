@@ -713,27 +713,27 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-071 — Side-panel title/summary tooltips clip on the right screen edge
 - reported: 2026-06-11 · class: bug (display)
-- status: triaged (batch 14)
+- status: fixed@batch-14
 - what: "tooltips for titles and summaries in the side panel get clipped on the right edge of the screen"
 - where: details panel, F-067 edit/regen icon tips
 - evidence: the CSS tooltip (::after) renders left-anchored by default; the panel hugs the right viewport edge. styles.css already keeps a right-edge-aware list (refresh, copy-key, op-menu summary, close, commit-revert, jump-bottom) — the new panel icons never joined it
-- resolution: (batch 14) right-anchor the panel icon tips (and audit every panel tip against the right edge)
+- resolution: batch 14: ONE rule covers the whole panel — `.details-panel [data-tip]::after` anchors right (icons, close, fields toggle, read-only message markers); the per-element right-edge list stays for non-panel elements. CSS-only — not unit-assertable (house precedent); verified in ui:smoke + live
 
 ## F-072 — No feedback while a field is regenerating
 - reported: 2026-06-11 · class: refinement
-- status: triaged (batch 14)
+- status: fixed@batch-14
 - what: "give 'wait' feedback while a field is regenerating, currently you cannot tell if something's happening"
 - where: details panel regen buttons (title/summary)
 - evidence: regen runs a multi-second claude-CLI call server-side; the panel button fires and nothing changes until the refetch lands. The dispatch path returns a promise (App.dispatchOp) — the panel can hold a busy state per button until it settles
-- resolution: (batch 14) regen buttons show an in-flight state (spinner/disabled) until the op settles; applies to both fields; the standing banner still carries refusals
+- resolution: batch 14: onRetitle returns the dispatch promise; the panel holds a per-field busy state on it — the clicked regen shows … and BOTH regen buttons disable until the op (incl. its refetch) settles; busy resets when the panel walks to another frame; refusals ride the standing banner unchanged. Regression: op-menu F-072 (stub gains a settable POST delay; busy text + both-disabled mid-flight, restored after settle, body pinned)
 
 ## F-073 — Every op needs a tooltip; tips must not clip against the side panel
 - reported: 2026-06-11 · class: refinement
-- status: triaged (batch 14)
+- status: fixed@batch-14
 - what: "add a tool tip for every operation, but make sure they don't get clipped against the side panel, the one for summerize does"
 - where: per-frame ops menu items
 - evidence: only summarize carries a MENU_TIPS tip today (F-065); it clips when the details panel is open (menu sits against the panel edge). Fix both: full jargon-free tip coverage for every menu verb + edge-aware positioning inside the menu
-- resolution: (batch 14) MENU_TIPS covers every menu op (plain language, F-028 jargon ban applies); menu tips anchor away from the panel edge; regression extends the tip scan to all menu items
+- resolution: batch 14: MENU_TIPS covers all 8 menu verbs (plain language — e.g. delete: "remove this frame from what the model sees — undo from the history tab"; offload: "park this frame's content in a file; a short note takes its place"); menu-item tips anchor to the button's LEFT (right:100%) so they extend away from the side panel. Regression: op-menu F-073 (every item non-empty tip + the F-028 jargon ban)
 
 ## F-074 — README: screenshots of all views, self-driven realistic content
 - reported: 2026-06-11 · class: docs request

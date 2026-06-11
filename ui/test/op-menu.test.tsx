@@ -105,6 +105,8 @@ let posts: PostRecord[] = [];
 let getCounts: Record<string, number> = {};
 /** Set per-test: route → {status, body} to refuse the next matching POST. */
 let refuse: { route: string; status: number; error: string } | null = null;
+/** F-072: set per-test to make POSTs pend — busy states become observable. */
+let postDelayMs = 0;
 
 const realFetch = globalThis.fetch;
 function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -119,10 +121,16 @@ function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (init?.method === "POST") {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     posts.push({ path, body });
-    if (refuse && path.startsWith(`${refuse.route}?`)) {
-      return reply({ error: refuse.error }, refuse.status);
+    const respond = () =>
+      refuse && path.startsWith(`${refuse.route}?`)
+        ? reply({ error: refuse.error }, refuse.status)
+        : reply({ conv: "conv-1", ok: true });
+    if (postDelayMs > 0) {
+      return new Promise((res) => setTimeout(() => res(respond()), postDelayMs)).then(
+        (r) => r as Response,
+      );
     }
-    return reply({ conv: "conv-1", ok: true });
+    return respond();
   }
   const key = path.split("?")[0]!;
   getCounts[key] = (getCounts[key] ?? 0) + 1;
@@ -153,6 +161,7 @@ beforeEach(() => {
   posts = [];
   getCounts = {};
   refuse = null;
+  postDelayMs = 0;
   document.body.innerHTML = "";
 });
 
@@ -888,4 +897,46 @@ test("F-064(1)/P2: history frame links open a replaced frame READ-ONLY; frames v
     f1.absorbedInto = null;
     history.splice(0);
   }
+});
+
+// ── F-072/F-073 (batch 14): regen in-flight feedback; a tip on every op ──────
+
+test("F-073: every menu op carries a non-empty, jargon-free tooltip", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  const items = Array.from(
+    container.querySelectorAll('.op-menu[data-frame-id="f1"] button[data-verb]'),
+  );
+  expect(items.length).toBeGreaterThan(0);
+  for (const b of items) {
+    const tip = b.getAttribute("data-tip");
+    expect(tip).not.toBeNull();
+    expect(tip!.length).toBeGreaterThan(0);
+    for (const word of ["emission", "audit", "registry", "arity"]) {
+      expect(tip!.toLowerCase()).not.toContain(word);
+    }
+  }
+});
+
+test("F-072: regen buttons show in-flight state until the dispatch settles; both disabled meanwhile", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
+  const panel = container.querySelector(".details-panel")!;
+  postDelayMs = 40; // POST pends — the busy state is observable
+  await act(async () => click(panel.querySelector(".regen-title")!));
+  const busyTitle = panel.querySelector(".regen-title") as HTMLButtonElement;
+  const busySummary = panel.querySelector(".regen-summary") as HTMLButtonElement;
+  expect(busyTitle.textContent).toBe("…"); // wait feedback (Nil)
+  expect(busyTitle.disabled).toBe(true);
+  expect(busySummary.disabled).toBe(true); // no double-fire on the sibling
+  // The dispatch (and its refetch) settles → the button comes back.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 80));
+  });
+  const after = panel.querySelector(".regen-title") as HTMLButtonElement;
+  expect(after.textContent).toBe("↻");
+  expect(after.disabled).toBe(false);
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ id: "f1", regen: true });
 });

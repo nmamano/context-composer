@@ -228,8 +228,10 @@ export function DetailsPanel(props: {
   frame: Frame;
   summary: FrameSummary | null;
   onClose: () => void;
-  /** F-067: save/regen dispatch the retitle verb (App owns the op plumbing). */
-  onRetitle?: (values: RetitleValues) => void;
+  /** F-067: save/regen dispatch the retitle verb (App owns the op plumbing).
+   *  Returns the dispatch promise so the panel can show in-flight state
+   *  (F-072 — regen runs a multi-second model call). */
+  onRetitle?: (values: RetitleValues) => Promise<void> | void;
   /** F-068: per-message edit — App builds the {raw} body and POSTs edit. */
   onEditMessage?: (index: number, text: string) => void;
 }) {
@@ -243,10 +245,21 @@ export function DetailsPanel(props: {
   // (the panel itself stays mounted so showAll sticks, per F-015).
   const [editingField, setEditingField] = useState<"title" | "summary" | null>(null);
   const [editingMsg, setEditingMsg] = useState<number | null>(null);
+  // F-072 (Nil: "you cannot tell if something's happening"): regen runs a
+  // multi-second model call — the button shows in-flight state until the
+  // dispatch (incl. its refetch) settles. Refusals still ride the banner.
+  const [regenBusy, setRegenBusy] = useState<"title" | "summary" | null>(null);
   useEffect(() => {
     setEditingField(null);
     setEditingMsg(null);
+    setRegenBusy(null);
   }, [f.id]);
+  const regen = (field: "title" | "summary", values: RetitleValues) => {
+    setRegenBusy(field);
+    void Promise.resolve(props.onRetitle?.(values)).finally(() =>
+      setRegenBusy(null),
+    );
+  };
   const rows = detailsFields(f);
   const visible = showAll ? rows : rows.filter((r) => r.tier === "core");
   const hiddenCount = rows.length - visible.length;
@@ -283,14 +296,15 @@ export function DetailsPanel(props: {
                   className="icon regen-title"
                   aria-label="regenerate title"
                   data-tip="let the AI write the title again (the description stays)"
+                  disabled={regenBusy !== null}
                   // Regen produces BOTH fields server-side; pinning the other
                   // field's CURRENT value scopes this button to the title
                   // (explicit values win over regen — route contract).
                   onClick={() =>
-                    props.onRetitle?.({ regen: true, summary: f.summary ?? undefined })
+                    regen("title", { regen: true, summary: f.summary ?? undefined })
                   }
                 >
-                  ↻
+                  {regenBusy === "title" ? "…" : "↻"}
                 </button>
               </span>
             )}
@@ -351,9 +365,10 @@ export function DetailsPanel(props: {
                   className="icon regen-summary"
                   aria-label="regenerate summary"
                   data-tip="let the AI write the description again (the title stays)"
-                  onClick={() => props.onRetitle?.({ regen: true, title: f.title })}
+                  disabled={regenBusy !== null}
+                  onClick={() => regen("summary", { regen: true, title: f.title })}
                 >
-                  ↻
+                  {regenBusy === "summary" ? "…" : "↻"}
                 </button>
               </span>
             )}
