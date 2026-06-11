@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { OP_REGISTRY, singleTargetOps } from "../../src/shared/ops.ts";
+import { menuOps, RELOCATED_TO_PANEL } from "../src/components/OpMenu.tsx";
 
 // --- minimal control-API fixture (one conv, two frames) ----------------------
 
@@ -62,8 +63,9 @@ const baseFrame = {
 
 const shows: Record<string, unknown> = {
   f1: { ...baseFrame, id: "f1", title: "alpha", tokenEstimate: 10, messages: [{ role: "user", content: "one" }] },
-  // f2 is MULTI-message (a realistic captured turn): F-060's edit prefill must
-  // NOT fire for it — flattening would silently restructure on submit.
+  // f2 is MULTI-message with a MIXED assistant reply (text + tool block) — the
+  // realistic captured-turn shape; F-068's panel offers per-message editing for
+  // the plain user message and a read-only tooltip for the mixed one.
   f2: {
     ...baseFrame,
     id: "f2",
@@ -71,7 +73,13 @@ const shows: Record<string, unknown> = {
     tokenEstimate: 12,
     messages: [
       { role: "user", content: "two" },
-      { role: "assistant", content: "two answered" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "two answered" },
+          { type: "tool_use", id: "tu9", name: "Bash", input: { cmd: "ls" } },
+        ],
+      },
     ],
   },
 };
@@ -193,13 +201,21 @@ function setSelectValue(el: HTMLSelectElement, value: string) {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-test("op menu is GENERATED from the registry — every single-target verb, nothing else", async () => {
+test("op menu is GENERATED from the registry minus the panel relocations (F-067/F-068)", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   const menuButtons = Array.from(
     container.querySelectorAll('.op-menu[data-frame-id="f1"] button[data-verb]'),
   ).map((b) => b.getAttribute("data-verb"));
-  expect(menuButtons).toEqual(singleTargetOps().map((o) => o.verb));
+  // Exactly the registry's single-target verbs MINUS the relocation list —
+  // edit lives on the panel's messages, retitle on the panel's title/summary.
+  expect(menuButtons).toEqual(menuOps().map((o) => o.verb));
+  expect(RELOCATED_TO_PANEL).toEqual(new Set(["edit", "retitle"]));
+  expect(menuButtons).not.toContain("edit");
+  expect(menuButtons).not.toContain("retitle");
+  // No unregistered UI-only verb may appear (the parity rail's UI half).
+  const registered = new Set(singleTargetOps().map((o) => o.verb));
+  for (const v of menuButtons) expect(registered.has(v!)).toBe(true);
   // F-029: store-scoped ops (none-arity) live in the FRAMES-VIEW toolbar —
   // deliberately not in the nav bar. F-046: revert-last is NOT here either —
   // it undoes the last commit, so it lives in the history tab (see
@@ -234,22 +250,21 @@ test("param-less op (delete) POSTs the registry body and refetches both views' s
   expect(getCounts["/control/compose"]).toBe(composeBefore + 1);
 });
 
-test("param op (edit) opens the generated form and maps values via build()", async () => {
+test("param op (split) opens the generated form and maps values via build()", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
-  const edit = container.querySelector(
-    '.op-menu[data-frame-id="f2"] button[data-verb="edit"]',
+  const split = container.querySelector(
+    '.op-menu[data-frame-id="f2"] button[data-verb="split"]',
   )!;
-  await act(async () => click(edit));
-  const form = container.querySelector('.op-form[data-op="edit"]')!;
+  await act(async () => click(split));
+  const form = container.querySelector('.op-form[data-op="split"]')!;
   expect(form).not.toBeNull();
-  // Required param empty → submit disabled (presence-only gating). f2 is
-  // multi-message, so F-060's prefill correctly stayed away.
+  // Required param empty → submit disabled (presence-only gating).
   const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
   expect(submit.disabled).toBe(true);
-  const ta = form.querySelector("textarea") as HTMLTextAreaElement;
-  expect(ta.value).toBe("");
-  await act(async () => setNativeValue(ta, "replacement text"));
+  const input = form.querySelector("input[type=\"text\"]") as HTMLInputElement;
+  expect(input.value).toBe("");
+  await act(async () => setNativeValue(input, "1"));
   await act(async () => click(form.querySelector('button[type="submit"]')!));
   for (let i = 0; i < 4; i++) {
     await act(async () => {
@@ -257,8 +272,8 @@ test("param op (edit) opens the generated form and maps values via build()", asy
     });
   }
   expect(posts).toHaveLength(1);
-  expect(posts[0]!.path.startsWith("/control/edit?conv=conv-1")).toBe(true);
-  expect(posts[0]!.body).toEqual({ id: "f2", text: "replacement text" });
+  expect(posts[0]!.path.startsWith("/control/split?conv=conv-1")).toBe(true);
+  expect(posts[0]!.body).toEqual({ id: "f2", at: [1] });
 });
 
 test("refusal renders the daemon's text VERBATIM, sticky until dismissed; refetch still runs", async () => {
@@ -407,7 +422,7 @@ test("ops are never hidden by frame state (a deleted frame still offers the full
     const verbs = Array.from(
       container.querySelectorAll('.op-menu[data-frame-id="f1"] button[data-verb]'),
     ).map((b) => b.getAttribute("data-verb"));
-    expect(verbs).toEqual(singleTargetOps().map((o) => o.verb));
+    expect(verbs).toEqual(menuOps().map((o) => o.verb));
   } finally {
     frames[0]!.deleted = false;
   }
@@ -455,7 +470,8 @@ test("F-008/F-029: forms render next to their trigger — under the card, or und
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   await act(async () =>
-    click(container.querySelector('.op-menu[data-frame-id="f2"] button[data-verb="edit"]')!),
+    // compact: still a menu op with a form (edit relocated to the panel, F-068).
+    click(container.querySelector('.op-menu[data-frame-id="f2"] button[data-verb="compact"]')!),
   );
   const inlineHost = container.querySelector(".op-form-host")!;
   expect(inlineHost.classList.contains("inline")).toBe(true);
@@ -544,32 +560,6 @@ test("F-047: combine position dropdown — default omits after; start maps to nu
   expect(posts[1]!.body).toEqual({ ids: ["f1", "f2"], after: "f2" });
 });
 
-// F-060: edit opens PREFILLED with the frame's current content when faithful
-// (single text message carrying the role edit would write) — an unchanged
-// submit reproduces the emission. prefill.test.ts pins the faithfulness rules;
-// this pins the flow through the form.
-test("F-060: edit form opens prefilled for a single-text-message frame; unchanged submit reproduces it", async () => {
-  const { container, act } = await renderApp();
-  await openFrameView(container, act);
-  await act(async () =>
-    click(container.querySelector('.op-menu[data-frame-id="f1"] button[data-verb="edit"]')!),
-  );
-  const form = container.querySelector('.op-form[data-op="edit"]')!;
-  const ta = form.querySelector("textarea") as HTMLTextAreaElement;
-  expect(ta.value).toBe("one"); // f1's lone user message, verbatim
-  // Prefill satisfies the required param — submit enabled immediately.
-  const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
-  expect(submit.disabled).toBe(false);
-  await act(async () => click(submit));
-  for (let i = 0; i < 4; i++) {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-  }
-  expect(posts).toHaveLength(1);
-  expect(posts[0]!.body).toEqual({ id: "f1", text: "one" });
-});
-
 // F-061: the compact form explains itself — explainer line, prefilled summary
 // text (the offload chain), plain-language tips on both fields.
 test("F-061: compact form opens prefilled with the summary chain, carries an explainer and jargon-free tips", async () => {
@@ -642,4 +632,131 @@ test("F-063: position dropdowns exclude deleted, fork-only and preamble frames",
     delete shows.f3;
     delete shows.f4;
   }
+});
+
+// ── F-067: the details panel edits metadata in place (retitle verb) ──────────
+
+async function selectFrame(
+  container: HTMLElement,
+  act: typeof import("react").act,
+  id: string,
+) {
+  await openFrameView(container, act);
+  await act(async () => click(container.querySelector(`.frame-card[data-frame-id="${id}"]`)!));
+  return container.querySelector(".details-panel")!;
+}
+
+test("F-067: title edits in place — editor prefilled, save POSTs retitle {id,title}", async () => {
+  const { container, act } = await renderApp();
+  const panel = await selectFrame(container, act, "f1");
+  await act(async () => click(panel.querySelector(".edit-title")!));
+  const input = panel.querySelector('input[aria-label="title editor"]') as HTMLInputElement;
+  expect(input.value).toBe("alpha"); // prefilled with the current value (F-066 principle)
+  await act(async () => setNativeValue(input, "my new title"));
+  await act(async () => click(panel.querySelector(".inline-editor-actions .save")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.path.startsWith("/control/retitle?conv=conv-1")).toBe(true);
+  expect(posts[0]!.body).toEqual({ id: "f1", title: "my new title" });
+});
+
+test("F-067: summary edits in place; regen buttons scope per field by pinning the other", async () => {
+  const { container, act } = await renderApp();
+  const panel = await selectFrame(container, act, "f1");
+  // Summary editor (f1 has none → empty editor, placeholder text shown before).
+  expect(panel.querySelector(".summary-text")!.textContent).toBe("(no description yet)");
+  await act(async () => click(panel.querySelector(".edit-summary")!));
+  const ta = panel.querySelector('textarea[aria-label="summary editor"]') as HTMLTextAreaElement;
+  expect(ta.value).toBe("");
+  await act(async () => setNativeValue(ta, "a fresh description"));
+  await act(async () => click(panel.querySelector(".inline-editor-actions .save")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ id: "f1", summary: "a fresh description" });
+  // Regen title: f1 has no summary to pin → {id, regen} (regen writes both,
+  // there was nothing to preserve).
+  await act(async () => click(panel.querySelector(".regen-title")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts[1]!.body).toEqual({ id: "f1", regen: true });
+  // Regen summary pins the CURRENT title so only the summary regenerates
+  // (route contract: explicit values win over regen).
+  await act(async () => click(panel.querySelector(".regen-summary")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts[2]!.body).toEqual({ id: "f1", title: "alpha", regen: true });
+});
+
+test("F-067: a panel refusal renders the daemon's text verbatim and still refetches", async () => {
+  const { container, act } = await renderApp();
+  const panel = await selectFrame(container, act, "f1");
+  refuse = { route: "/control/retitle", status: 400, error: "retitle needs title, summary, or regen" };
+  const listBefore = getCounts["/control/list"] ?? 0;
+  await act(async () => click(panel.querySelector(".edit-title")!));
+  await act(async () => click(panel.querySelector(".inline-editor-actions .save")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  const banner = container.querySelector(".op-error-banner")!;
+  expect(banner).not.toBeNull();
+  expect(banner.textContent).toContain("retitle");
+  expect(banner.textContent).toContain("retitle needs title, summary, or regen");
+  expect(getCounts["/control/list"]).toBe(listBefore + 1); // refetch ran
+});
+
+// ── F-068: per-message editing in the panel (edit verb, programmatic raw) ────
+
+test("F-068: message edit posts the FULL raw emission with only the edited message changed", async () => {
+  const { container, act } = await renderApp();
+  const panel = await selectFrame(container, act, "f2");
+  // The freeze note precedes the affordances (reviewer adjustment #4).
+  expect(panel.querySelector(".freeze-note")).not.toBeNull();
+  expect(panel.querySelector(".freeze-note")!.textContent).toContain(
+    "whole frame",
+  );
+  // Message 0 (plain string) is editable; message 1 (text + tool_use) is
+  // read-only with a tooltip (reviewer option (a)).
+  const editBtn = panel.querySelector('[aria-label="edit message 0"]')!;
+  expect(editBtn).not.toBeNull();
+  expect(panel.querySelector('[aria-label="edit message 1"]')).toBeNull();
+  const disabled = panel.querySelector(".msg-edit-disabled")!;
+  expect(disabled).not.toBeNull();
+  expect(disabled.getAttribute("data-tip")).toContain("tool data");
+  // Edit message 0: textarea prefilled verbatim, save posts {id, raw}.
+  await act(async () => click(editBtn));
+  const ta = panel.querySelector('textarea[aria-label="message 0 editor"]') as HTMLTextAreaElement;
+  expect(ta.value).toBe("two");
+  await act(async () => setNativeValue(ta, "two — rewritten"));
+  await act(async () => click(panel.querySelector(".message-editor .save")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.path.startsWith("/control/edit?conv=conv-1")).toBe(true);
+  const body = posts[0]!.body as { id: string; raw: unknown[] };
+  expect(body.id).toBe("f2");
+  expect(body.raw).toHaveLength(2);
+  expect(body.raw[0]).toEqual({ role: "user", content: "two — rewritten" });
+  // The untouched mixed message rides byte-identical (tool block preserved).
+  expect(JSON.stringify(body.raw[1])).toBe(
+    JSON.stringify((shows.f2 as { messages: unknown[] }).messages[1]),
+  );
 });

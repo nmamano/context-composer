@@ -7,34 +7,11 @@
 // edit it; clearing the field omits the param and the daemon derives the
 // identical value. The UI still decides nothing.
 
-import type { Frame, WireMessage } from "../../src/engine/types.ts";
+import type { Frame } from "../../src/engine/types.ts";
 import type { OpSpec } from "../../src/shared/ops.ts";
 import { deriveSummary } from "../../src/engine/offload.ts";
 import { currentEmission } from "./transcript.ts";
 import type { FormValues } from "./components/OpMenu.tsx";
-
-/** F-060: edit replaces the frame's whole emission with ONE message
- *  ({role: frame opener's role, content: <text>} — state.ts
- *  setRepresentation). A prefill is offered only when submitting it
- *  UNCHANGED reproduces the current emission's text and role: exactly one
- *  message, carrying the role edit would assign, whose content is plain
- *  text. Multi-message emissions prefill NOTHING — flattening them into the
- *  box would silently restructure the frame on submit. (A single message
- *  whose content is one text block prefills too: same text, same role; the
- *  shape normalizes to edit's own string-content output on submit.) */
-function singleTextEmission(f: Frame): string | null {
-  const emission: WireMessage[] = currentEmission(f);
-  if (emission.length !== 1) return null;
-  const m = emission[0]!;
-  const editRole = f.role === "assistant" ? "assistant" : "user";
-  if (m.role !== editRole) return null;
-  if (typeof m.content === "string") return m.content;
-  const only = m.content.length === 1 ? m.content[0] : undefined;
-  if (only && only.type === "text" && typeof only.text === "string") {
-    return only.text;
-  }
-  return null;
-}
 
 export function opPrefill(op: OpSpec, targets: Frame[]): FormValues {
   if (targets.length !== 1) return {};
@@ -60,10 +37,9 @@ export function opPrefill(op: OpSpec, targets: Frame[]): FormValues {
     const text = f.summary ?? deriveSummary(currentEmission(f));
     return text !== null ? { text } : {};
   }
-  if (op.verb === "edit") {
-    // F-060: current content, when faithful (see singleTextEmission).
-    const text = singleTextEmission(f);
-    return text !== null ? { text } : {};
-  }
+  // F-060's whole-frame edit prefill is gone WITH the menu edit form (F-068:
+  // editing moved to the details panel, per message — see transcript.ts
+  // editableMessageText/replaceMessageText, which carry the same faithfulness
+  // bar at message level).
   return {};
 }

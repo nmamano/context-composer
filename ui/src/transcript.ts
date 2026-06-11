@@ -38,6 +38,41 @@ export function currentEmission(f: FrameContent): WireMessage[] {
   return f.representation ?? f.messages;
 }
 
+/** F-068 (plan-gated): a message editable as PLAIN TEXT from the details
+ *  panel — its whole content is one text: a plain string, or exactly one text
+ *  block. Mixed/tool-block messages return null (read-only with a tooltip —
+ *  reviewer option (a)): a single textarea would flatten or re-split them. */
+export function editableMessageText(m: WireMessage): string | null {
+  if (typeof m.content === "string") return m.content;
+  const only = m.content.length === 1 ? m.content[0] : undefined;
+  if (only && only.type === "text" && typeof only.text === "string") {
+    return only.text;
+  }
+  return null;
+}
+
+/** F-068: build the `raw` body for a per-message edit — deep-clone the CURRENT
+ *  emission, change ONLY message `index`'s text, preserve everything else
+ *  byte-for-byte and the edited message's SHAPE (string content stays string;
+ *  a single text block keeps its block wrapper and any extra props). Returns
+ *  null when the target message is not plain-text-editable. */
+export function replaceMessageText(
+  emission: WireMessage[],
+  index: number,
+  text: string,
+): WireMessage[] | null {
+  const m = emission[index];
+  if (!m || editableMessageText(m) === null) return null;
+  const out = structuredClone(emission);
+  const target = out[index]!;
+  if (typeof target.content === "string") {
+    target.content = text;
+  } else {
+    (target.content[0] as { text: string }).text = text;
+  }
+  return out;
+}
+
 function blockToTranscript(b: Block): TranscriptBlock {
   if (b.type === "text" && typeof b.text === "string") {
     return { kind: "text", label: null, text: b.text };

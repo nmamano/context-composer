@@ -311,11 +311,31 @@ try {
       .locator(`.op-menu[data-frame-id="${frameId}"] button[data-verb="${verb}"]`)
       .click();
   };
+  // F-067/F-068: edit + retitle relocated to the details panel — same verbs,
+  // same routes, panel entry points (the menu no longer offers them).
+  const openPanel = async (frameId: string) => {
+    await page.locator(`.frame-card[data-frame-id="${frameId}"]`).click();
+    await page.waitForSelector(".details-panel");
+  };
+  const panelEditMessage = async (frameId: string, idx: number, text: string) => {
+    await openPanel(frameId);
+    await page.locator(`.details-panel [aria-label="edit message ${idx}"]`).click();
+    await page
+      .locator(`.details-panel textarea[aria-label="message ${idx} editor"]`)
+      .fill(text);
+    await page.locator(".details-panel .message-editor .save").click();
+  };
+  const panelEditTitle = async (frameId: string, text: string) => {
+    await openPanel(frameId);
+    await page.locator(".details-panel .edit-title").click();
+    await page.locator('.details-panel input[aria-label="title editor"]').fill(text);
+    await page.locator(".details-panel .inline-editor-actions .save").click();
+  };
 
-  // -- REFUSAL 1: edit the OFFLOADED frame — the daemon's guard speaks ---------
-  await openMenuAndPick(off.id, "edit");
-  await page.locator('.op-form[data-op="edit"] textarea').fill("should be refused");
-  await page.locator('.op-form[data-op="edit"] button[type="submit"]').click();
+  // -- REFUSAL 1: edit the OFFLOADED frame (panel message edit, F-068) — the
+  //    daemon's guard speaks; the stub is a single text message, so the panel
+  //    offers the affordance and the refusal still renders verbatim.
+  await panelEditMessage(off.id, 0, "should be refused");
   await page.waitForSelector(".op-error-banner");
   const bannerText = await page.locator(".op-error-banner").innerText();
   check(
@@ -334,9 +354,9 @@ try {
   await page.locator(".op-error-banner .dismiss").click();
 
   // -- REFUSAL 2: regen with LLM unavailable (env scrubbed by ui-smoke.sh) ----
-  await openMenuAndPick(B.id, "retitle");
-  await page.locator('.op-form[data-op="retitle"] input[type="checkbox"]').check();
-  await page.locator('.op-form[data-op="retitle"] button[type="submit"]').click();
+  //    F-067: regen is a panel button beside the title now.
+  await openPanel(B.id);
+  await page.locator(".details-panel .regen-title").click();
   await page.waitForSelector(".op-error-banner");
   check(
     /regen unavailable/i.test(await page.locator(".op-error-banner").innerText()),
@@ -367,11 +387,9 @@ try {
   );
   await page.getByRole("tab", { name: "frames" }).click();
 
-  // -- edit C: override visible in BOTH views ----------------------------------
+  // -- edit C: PANEL message edit (F-068) — override visible in BOTH views ----
   const editedText = "edited from the browser (5b op smoke)";
-  await openMenuAndPick(C.id, "edit");
-  await page.locator('.op-form[data-op="edit"] textarea').fill(editedText);
-  await page.locator('.op-form[data-op="edit"] button[type="submit"]').click();
+  await panelEditMessage(C.id, 0, editedText);
   await page.waitForSelector(`.frame-card[data-frame-id="${C.id}"] .chip-override`);
   const afterEdit = (await freshList()).find((f) => f.id === C.id)!;
   check(afterEdit.overridden, `edit ${C.id} set a representation override (API oracle)`);
@@ -404,13 +422,7 @@ try {
   //    the last commit, so it lives next to the commit list — NOT in the
   //    frames toolbar; F-029 keeps add/combine there) ------------------------
   const oldTitle = B.title;
-  await openMenuAndPick(B.id, "retitle");
-  await page
-    .locator('.op-form[data-op="retitle"] label', { hasText: "title" })
-    .first()
-    .locator("input")
-    .fill("smoke-retitled-5b");
-  await page.locator('.op-form[data-op="retitle"] button[type="submit"]').click();
+  await panelEditTitle(B.id, "smoke-retitled-5b");
   await page.waitForSelector(
     `.frame-card[data-frame-id="${B.id}"]:has-text("smoke-retitled-5b")`,
   );
@@ -510,13 +522,7 @@ try {
 
   // -- panel revert SUCCESS: retitle B again, revert it FROM THE HISTORY CARD -
   await switchTab("frames", ".frame-view .frame-card");
-  await openMenuAndPick(B.id, "retitle");
-  await page
-    .locator('.op-form[data-op="retitle"] label', { hasText: "title" })
-    .first()
-    .locator("input")
-    .fill("retitled-for-history-smoke");
-  await page.locator('.op-form[data-op="retitle"] button[type="submit"]').click();
+  await panelEditTitle(B.id, "retitled-for-history-smoke");
   await page.waitForSelector(
     `.frame-card[data-frame-id="${B.id}"]:has-text("retitled-for-history-smoke")`,
   );

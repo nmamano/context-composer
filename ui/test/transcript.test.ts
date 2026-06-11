@@ -116,3 +116,83 @@ describe("messageBlocks (plain collapsed blocks — §4/§9, no widgets)", () =>
     expect(blocks[0]!.text).toContain('"hmm"');
   });
 });
+
+// ── F-068 (plan-gated): per-message edit helpers — the faithfulness bar ──────
+// editableMessageText: plain string or exactly one text block; anything mixed
+// is read-only (reviewer option (a)). replaceMessageText: full deep clone,
+// ONLY the target message's text changes, shapes preserved.
+
+import { editableMessageText, replaceMessageText } from "../src/transcript.ts";
+
+test("F-068: editableMessageText — string and single-text-block yes; mixed/tool no", () => {
+  expect(editableMessageText({ role: "user", content: "plain" })).toBe("plain");
+  expect(
+    editableMessageText({ role: "user", content: [{ type: "text", text: "block" }] }),
+  ).toBe("block");
+  expect(
+    editableMessageText({
+      role: "assistant",
+      content: [
+        { type: "text", text: "t" },
+        { type: "tool_use", id: "tu1", name: "Bash", input: {} },
+      ],
+    }),
+  ).toBeNull();
+  expect(
+    editableMessageText({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "tu1", content: "out" }],
+    }),
+  ).toBeNull();
+  expect(editableMessageText({ role: "user", content: [] })).toBeNull();
+});
+
+test("F-068: replaceMessageText — string message edited, every other message byte-identical", () => {
+  const emission = [
+    { role: "user" as const, content: "original question" },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "text", text: "answer" },
+        { type: "tool_use", id: "tu1", name: "Bash", input: { cmd: "ls" } },
+      ],
+    },
+  ];
+  const before = JSON.stringify(emission);
+  const raw = replaceMessageText(emission, 0, "rewritten question")!;
+  expect(raw).not.toBeNull();
+  expect(raw[0]).toEqual({ role: "user", content: "rewritten question" });
+  expect(typeof raw[0]!.content).toBe("string"); // string shape preserved
+  // The untouched message is byte-identical (incl. its tool blocks)…
+  expect(JSON.stringify(raw[1])).toBe(JSON.stringify(emission[1]));
+  // …and the INPUT array was not mutated (deep clone, reviewer adjustment #2).
+  expect(JSON.stringify(emission)).toBe(before);
+});
+
+test("F-068: replaceMessageText — single-text-block message keeps its block wrapper and extra props", () => {
+  const emission = [
+    {
+      role: "user" as const,
+      content: [{ type: "text", text: "old", cache_control: { type: "ephemeral" } }],
+    },
+  ];
+  const raw = replaceMessageText(emission, 0, "new text")!;
+  const block = (raw[0]!.content as Record<string, unknown>[])[0]!;
+  expect(block.type).toBe("text");
+  expect(block.text).toBe("new text");
+  expect(block.cache_control).toEqual({ type: "ephemeral" }); // extra props survive
+});
+
+test("F-068: replaceMessageText refuses non-editable targets and bad indices", () => {
+  const mixed = [
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "text", text: "t" },
+        { type: "tool_use", id: "tu1", name: "Bash", input: {} },
+      ],
+    },
+  ];
+  expect(replaceMessageText(mixed, 0, "x")).toBeNull();
+  expect(replaceMessageText(mixed, 5, "x")).toBeNull();
+});

@@ -35,6 +35,7 @@ import { OpForm, type FormValues } from "./components/OpMenu.tsx";
 import { HistoryView, type HistorySubView } from "./components/HistoryView.tsx";
 import { opPrefill } from "./prefill.ts";
 import { copyText } from "./copy.ts";
+import { currentEmission, replaceMessageText } from "./transcript.ts";
 
 export type ViewMode = "conversation" | "frames" | "history";
 
@@ -165,15 +166,18 @@ export function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [loadConversation, loaded?.conv]);
 
-  /** Dispatch one registry op: build body → POST the op's own control route →
-   *  refetch via the single path. Success clears the sticky refusal; a refusal
-   *  replaces it with the daemon's text verbatim. */
-  const runOp = useCallback(
-    async (op: OpSpec, targets: string[], values: FormValues) => {
+  /** The ONE dispatch core: POST a body to an op's control route → refetch via
+   *  the single path. Success clears the sticky refusal; a refusal replaces it
+   *  with the daemon's text verbatim. Used by runOp (registry-built bodies)
+   *  AND the details panel's programmatic bodies (F-068 {id, raw} — the
+   *  history-revert precedent: same route/verb, body passed programmatically,
+   *  registry untouched). */
+  const dispatchOp = useCallback(
+    async (op: OpSpec, targets: string[], body: Record<string, unknown>) => {
       if (!loaded) return;
       setPendingOp(null);
       try {
-        await postOp(loaded.conv, op.route, op.build(targets, values));
+        await postOp(loaded.conv, op.route, body);
         setOpError(null);
         if (op.verb === "combine") {
           setCombineMode(false);
@@ -191,6 +195,13 @@ export function App() {
       await loadConversation(loaded.conv);
     },
     [loaded, loadConversation],
+  );
+
+  /** Dispatch one registry op from form values (build → dispatch). */
+  const runOp = useCallback(
+    (op: OpSpec, targets: string[], values: FormValues) =>
+      dispatchOp(op, targets, op.build(targets, values)),
+    [dispatchOp],
   );
 
   /** Menu pick: param-less ops run immediately; others open the generated form
@@ -245,6 +256,9 @@ export function App() {
   const addOp = opByVerb("add")!;
   const revertOp = opByVerb("revert")!;
   const combineOp = opByVerb("combine")!;
+  // F-067/F-068: the details panel dispatches these — same verbs, same routes.
+  const retitleOp = opByVerb("retitle")!;
+  const editOp = opByVerb("edit")!;
   const activeKey = (loaded && convs.find((c) => c.id === loaded.conv)?.key) || null;
 
   // F-008/F-029: where does the pending form live this render? Single-target
@@ -479,6 +493,18 @@ export function App() {
             frame={selected}
             summary={selectedSummary}
             onClose={() => setSelectedId(null)}
+            // F-067: inline title/summary editing — the retitle verb, built by
+            // the registry (title/summary/regen are its params).
+            onRetitle={(values) => void runOp(retitleOp, [selected.id], values)}
+            // F-068: per-message editing — the edit verb with a programmatic
+            // {id, raw} body: the CURRENT emission with ONLY message i's text
+            // replaced (replaceMessageText preserves every untouched byte and
+            // the edited message's shape).
+            onEditMessage={(index, text) => {
+              const raw = replaceMessageText(currentEmission(selected), index, text);
+              if (raw === null) return; // not plain-text-editable — icon never offered
+              void dispatchOp(editOp, [selected.id], { id: selected.id, raw });
+            }}
           />
         )}
       </main>

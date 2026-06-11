@@ -36,6 +36,26 @@ const FORM_EXPLAINERS: Record<string, string> = {
     "Shrink what the model sees: this frame's content is replaced by a short summary in the conversation sent to the model. Undo from the history tab.",
 };
 
+/** F-067/F-068 (Nil-decided, plan-gated): ops RELOCATED to the details panel —
+ *  same verbs, same routes, better-shaped entry points (title/summary edit in
+ *  place; per-message editing). The verbs stay in the registry and the CLI
+ *  untouched — the parity rail is registry↔CLI, and no UI-only verb may exist;
+ *  the menu simply offers fewer entry points than the registry. */
+export const RELOCATED_TO_PANEL: ReadonlySet<string> = new Set(["edit", "retitle"]);
+
+/** The ops menu's verb list: every single-target registry op EXCEPT the
+ *  panel-relocated ones. Exported so the menu-pin test asserts it exactly. */
+export const menuOps = (): OpSpec[] =>
+  singleTargetOps().filter((o) => !RELOCATED_TO_PANEL.has(o.verb));
+
+/** F-065 (corrected truth): per-menu-item tooltips where a verb confused Nil.
+ *  summarize is a WIRE op — it swaps tool results inside the frame for a
+ *  summary; it does NOT touch the card's title/summary (that's the panel). */
+const MENU_TIPS: Record<string, string> = {
+  summarize:
+    "swap chosen tool results inside this frame for a short summary the model sees instead",
+};
+
 function ParamField(props: {
   spec: ParamSpec;
   verb: string;
@@ -203,11 +223,12 @@ export function OpMenu(props: {
         ops ▾
       </summary>
       <ul>
-        {singleTargetOps().map((op) => (
+        {menuOps().map((op) => (
           <li key={op.verb}>
             <button
               type="button"
               data-verb={op.verb}
+              data-tip={MENU_TIPS[op.verb]}
               onClick={(e) => {
                 // Close the dropdown on pick — a stale open <details> floats
                 // over neighboring cards and intercepts their clicks.
