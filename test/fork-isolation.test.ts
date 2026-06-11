@@ -485,3 +485,29 @@ test("F-045: annotation-only — compose/view membership is byte-identical with 
   expect(composed.emittedFrameIds).toContain("t2");
   expect(JSON.stringify(composed.body)).toContain("SUGGESTION MODE: X");
 });
+
+test("F-055: the LIVE marker form (no leading asterisk) is caught; italic-wrapped still works", () => {
+  // Live wire truth (Nil's store, conv c5/t6, 2026-06-11): the suggestion
+  // instruction arrives as plain "[SUGGESTION MODE: ..." — the original
+  // gated literal carried a leading "*" and never matched real content.
+  const store = new FrameStore();
+  const v = store.ingest({
+    ...F045_HEAD,
+    messages: [
+      { role: "user", content: "hello main" },
+      { role: "assistant", content: "main reply 1" },
+      {
+        role: "user",
+        content:
+          "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]\n\nFIRST: Look at the user's recent messages.",
+      },
+      { role: "assistant", content: "suggested next input" },
+      { role: "user", content: "*[SUGGESTION MODE: italic-wrapped variant]* go" },
+    ],
+  });
+  store.noteEmittedView(v);
+  const byId = Object.fromEntries(store.list().map((f) => [f.id, f]));
+  expect(byId.t1!.inLastView).toBe(true);
+  expect(byId.t2!.inLastView).toBe(false); // plain live form — the actual bug
+  expect(byId.t3!.inLastView).toBe(false); // italic-wrapped form still caught
+});

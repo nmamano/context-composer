@@ -93,7 +93,7 @@ export type RepInput = { text: string } | { raw: WireMessage[] };
  *  frame's FIRST message's first text content, after leading-whitespace trim.
  *  See the call site in summarize() for the full design rationale (this is
  *  the engine's single authorized content heuristic — do not generalize). */
-const SUGGESTION_MARKER = "*[SUGGESTION MODE";
+const SUGGESTION_MARKER = "[SUGGESTION MODE";
 
 /** F-053 (Phase 5e, Nil-authorized 2026-06-10; reviewer-gated): brittle
  *  exception #2 to the locked "no content heuristics" principle. Claude Code
@@ -144,7 +144,11 @@ function opensWithSuggestionMarker(f: Frame): boolean {
       }
     }
   }
-  return text.trimStart().startsWith(SUGGESTION_MARKER);
+  // F-055: the live wire sends the marker as plain "[SUGGESTION MODE:" — the
+  // original gated literal carried a leading "*" transcribed from Nil's
+  // prose and never matched real content. Accept optional leading asterisks
+  // (markdown-italic wrapping) after the whitespace trim; nothing wider.
+  return text.trimStart().replace(/^\*+/, "").startsWith(SUGGESTION_MARKER);
 }
 
 export class FrameStore {
