@@ -8,11 +8,17 @@
 // param gating is allowed, the daemon's refusal is the source of truth for
 // everything else.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { OpSpec, ParamSpec } from "../../../src/shared/ops.ts";
 import { singleTargetOps } from "../../../src/shared/ops.ts";
 import type { FrameSummary } from "../../../src/engine/state.ts";
+import type { Frame, WireMessage } from "../../../src/engine/types.ts";
 import { positionAnchors } from "../flags.ts";
+import {
+  currentEmission,
+  editableMessageText,
+  messageBlocks,
+} from "../transcript.ts";
 
 export type FormValues = Record<string, string | boolean | undefined>;
 
@@ -56,6 +62,73 @@ const MENU_TIPS: Record<string, string> = {
     "swap chosen tool results inside this frame for a short summary the model sees instead",
 };
 
+/** F-064(3) (Nil: the split form "needs more hand holding"): cut points are
+ *  PICKED on the frame's actual messages, not guessed as numbers. Renders the
+ *  CURRENT emission (what split actually cuts) with a "cut here" tick between
+ *  each pair of messages; the value stays the registry's comma-string ("1,3")
+ *  so build()/ops.ts are untouched. */
+function SplitBoundaryPicker(props: {
+  frame: Frame;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const emission = currentEmission(props.frame);
+  const selected = new Set(
+    props.value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const toggle = (b: number) => {
+    const next = new Set(selected);
+    const key = String(b);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    props.onChange(
+      Array.from(next)
+        .map(Number)
+        .sort((x, y) => x - y)
+        .join(","),
+    );
+  };
+  const preview = (m: WireMessage): string => {
+    const t = editableMessageText(m);
+    const text =
+      t ??
+      messageBlocks(m)
+        .map((b) => b.label ?? b.text)
+        .join(" · ");
+    return text.length > 70 ? `${text.slice(0, 69)}…` : text;
+  };
+  return (
+    <div className="split-picker">
+      <p className="split-picker-hint">
+        tick where to cut — each cut starts a new frame
+      </p>
+      {emission.map((m, i) => (
+        <Fragment key={i}>
+          {i > 0 && (
+            <label className="split-cut">
+              <input
+                type="checkbox"
+                aria-label={`cut before message ${i}`}
+                checked={selected.has(String(i))}
+                onChange={() => toggle(i)}
+              />
+              ✂ cut here
+            </label>
+          )}
+          <div className={`split-msg ${m.role}`}>
+            <span className="msg-index">#{i}</span>
+            <span className="bubble-role">{m.role}</span>
+            <span className="split-msg-preview">{preview(m)}</span>
+          </div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
 function ParamField(props: {
   spec: ParamSpec;
   verb: string;
@@ -63,8 +136,24 @@ function ParamField(props: {
   onChange: (v: string | boolean) => void;
   /** F-039: position params render as a dropdown fed by the loaded frames. */
   frames?: FrameSummary[];
+  /** F-064(3): the single target's full frame — feeds the split picker. */
+  targetFrame?: Frame;
 }) {
   const { spec } = props;
+  // F-064(3): boundary indices are picked on the messages themselves when the
+  // target frame is loaded; the plain text input remains the fallback.
+  if (spec.kind === "indices" && props.targetFrame) {
+    return (
+      <div className="op-param">
+        {spec.label}
+        <SplitBoundaryPicker
+          frame={props.targetFrame}
+          value={typeof props.value === "string" ? props.value : ""}
+          onChange={(v) => props.onChange(v)}
+        />
+      </div>
+    );
+  }
   // F-039 (plans/ui-feedback.md): the free-text position field was ambiguous
   // (before or after the id?) — a dropdown makes the AFTER semantics explicit.
   // Values stay exactly what build()/position() expect: "" = end (omitted),
@@ -144,6 +233,8 @@ export function OpForm(props: {
   initial?: FormValues;
   /** F-039: loaded frames feed the position dropdown. */
   frames?: FrameSummary[];
+  /** F-064(3): the single target's full frame (split boundary picker). */
+  targetFrame?: Frame;
   /** Presence-gating only: required params must be non-empty before POST. */
   onSubmit: (values: FormValues) => void;
   onCancel: () => void;
@@ -177,6 +268,7 @@ export function OpForm(props: {
           spec={p}
           verb={props.op.verb}
           frames={props.frames}
+          targetFrame={props.targetFrame}
           value={values[p.key]}
           onChange={(v) => setValues((prev) => ({ ...prev, [p.key]: v }))}
         />

@@ -652,17 +652,19 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-064 — Split: confusing form; children appear at the end with placeholder titles; original remains visible
 - reported: 2026-06-11 (Nil's "10.5") · class: design-question (display + engine metadata)
-- status: (2) fixed@batch-I · (1) + (3) triaged (batch 13)
+- status: (2) fixed@59dc010 (batch I; reviewer-signed 2026-06-11, scoped, no findings) · (1) + (3) fixed@batch-13
 - plan-gate GO for (2) (Context Reviewer, 2026-06-11) with one required adjustment, adopted as his preferred option 1: enrichEligible is CAPTURED-ORIGIN ONLY (auto-enrichment is a live-capture mechanism; manufactured frames — added/combined/split — are never eligible), making the no-quota-burn invariant explicit rather than call-site-dependent. Title cap: engine-local CHILD_TITLE_MAX(80) helper — the proxy's TITLE_MAX is deliberately NOT imported (engine stays independent of the server layer); the ' (part i/N)' suffix is preserved exactly, only the inherited portion truncates.
 - implementation (batch I): split() stamps children with '<original title> (part i/N)' + the original's summary verbatim (when set) at creation; deterministic, no LLM, no enrichment record (derived split metadata ≠ auto-enrichment). Regressions: structural-ops F-064(2) ×4 (N=2 inherit + original untouched + no enrichment record; N=3 numbering + summary-less stays null; long-title truncation keeps the suffix, ≤80; snapshot restart durability); enrich.test F-064(2) (split child with null summary NOT eligible — the origin guard — plus queue burns nothing on it; added frames equally ineligible)
 - what: "split menu is confusing ... needs more hand holding. also, the two frames resulting from split appear at the end of the convo, instead of where the previous frame was. and the previous frame still exists, leading to duplication. more reasonable would be to split in place, old one disappears. also, the new ones should carry over the title and summary, edited to show that it's been split (like 'part 1/2')."
 - evidence: the WIRE is already right (children emit AT the original's slot via resolution; the original emits nothing — pinned by structural-ops tests). What Nil sees is the FRAME VIEW, which lists STORE order: children are new frames (appended), the split original remains as the match target (flagged). Same presentation applies to combine parts. Children get placeholder titles because enrichment is live-ingest-only and split is an op
 - decided (Nil, 2026-06-11): (1) AMENDED — not a hide-toggle: "not hide, they literally dont exist anymre rfter being replaced, thats what replaced means" → structurally-replaced frames (split originals / absorbed parts) are REMOVED from the frame view entirely, no toggle (display filter; engine match-target truth unchanged; revert still available from the history tab); (2) YES — split() derives children titles/summaries deterministically ("<title> (part 1/2)", summary carried; no LLM; engine, plan-gated); (3) YES — hand-holding split form (show the frame's messages with indices so the cut points are picked, not guessed)
 - note: t18-era complaint "frame t18, no summary" = (2)
+- implementation (batch 13, parts 1+3): (1) FrameView excludes frames with absorbedInto / non-empty splitInto from the card list entirely — no toggle (deliberately unlike F-006: Nil's words, replaced means gone); engine match-target truth unchanged; revert from the history tab brings them back; a pending op form on a replaced frame falls back to the top host (never invisible). Deliberate tension PINNED in test: absorbed parts remain valid position-dropdown anchors (F-047: they keep their order-spine slot) even with no card. (3) the split form's indices input becomes a BOUNDARY PICKER when the target frame is loaded: the CURRENT emission's messages render with index/role/preview and a 'cut here' tick between each pair; ticks map to the registry's same comma-string ('1,3') — ops.ts/build() untouched; presence-gating unchanged (no tick → submit disabled); plain-text fallback kept for targets without loaded details. Regressions: op-menu F-064(1) (replaced frames have no card + no toggle + stay anchors), split exemplar test rewritten to the picker (boundary count, previews, tick→{id,at:[1]} wire shape pinned)
+- reviewer finding (P2, fixed pre-commit): the details panel could OUTLIVE the removed card — a frame selected before its combine/split stayed in the panel with full edit affordances after the refetch removed its card. Fixed per his shape: a selection that becomes replaced CLEARS on any non-history surface (effect over the refetched summary); history frame links still open replaced frames for INSPECTION (their subject matter) but READ-ONLY — App passes no onRetitle/onEditMessage, and the panel keys every affordance (pencils, regens, freeze note) off those callbacks' presence. Regressions: op-menu P2 ×2 (selection clears with the refetch that replaces it — card and panel both gone; history link opens replaced frame read-only with zero affordances, returning to frames clears it)
 
 ## F-065 — Compact vs summarize: difference unclear
 - reported: 2026-06-11 (Nil's "10.6") · class: refinement
-- status: fixed@batch-12 (narrowed scope: a plain tooltip on the summarize menu item)
+- status: fixed@fea18a4 (batch 12; narrowed scope: a plain tooltip on the summarize menu item)
 - what: "what is the difference between compact and summarize?"
 - evidence: CORRECTED 2026-06-11 (the earlier triage note was WRONG): summarize is NOT display metadata — engine summarizeResults (state.ts) replaces selected TOOL RESULTS inside the frame's emission with a summary (a wire transform, the strip-with-replacement op). The card's title+summary are set by RETITLE alone. True answer to Nil: compact = replace the WHOLE frame's emission with a summary; summarize = replace selected tool results inside it
 - resolution: batch 12: the summarize menu item carries an instant tooltip — "swap chosen tool results inside this frame for a short summary the model sees instead" (UI-side MENU_TIPS map; corrected truth, jargon-free). summarize STAYS in the ops menu (a wire op, not metadata). Regression: the F-061 tip pattern's jargon ban covers it via the menu render
@@ -677,7 +679,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-067 — Summarize/retitle shouldn't look like frame operations — make title/summary editable in the details panel
 - reported: 2026-06-11 · class: design-question (UI surface reshape)
-- status: fixed@batch-12
+- status: fixed@fea18a4 (batch 12; reviewer-signed 2026-06-11 — one P3, the premature F-069 ledger claim, fixed ledger-only pre-commit)
 - what: "summarize and retitle shouldn't *look* like frame operations if they just modify metadata. We could just make the title and summary fields editable in the frame side panel"
 - where: details panel + per-frame ops menu
 - evidence: parity rail is SAFE: inline editing dispatches the SAME registry verb (RETITLE — it owns both title and summary params) to the SAME route — a different entry point, not a new op (the F-013 feasibility argument). SCOPE CORRECTION at decision time: `summarize` is a TOOL-RESULT wire transform (see F-065 corrected evidence), NOT metadata — only RETITLE leaves the menu; summarize stays
@@ -686,7 +688,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-068 — Edit shouldn't be a whole-frame textarea: per-message edit in the details panel; edit leaves the ops menu
 - reported: 2026-06-11 · class: design-question (Nil-proposed mechanism; PLAN-GATE before implementing)
-- status: fixed@batch-12
+- status: fixed@fea18a4 (batch 12; reviewer-signed 2026-06-11)
 - what: (on learning F-060's faithfulness constraint — multi-message frames can't prefill a single textarea) "i'd like to propose a different mechanism: a. remove edit from the ops menu. compact already covers this use case. b. add an edit icon for each message in the side panel, along with the edit icons for the title and summary."
 - where: details panel (emission message list) + per-frame ops menu
 - evidence: parity is ALREADY satisfied at the verb level: `ctx edit <frame> --raw <json>` exists (cli/ctx.ts) and /control/edit accepts {id, raw} — the UI can implement per-message editing as: take the CURRENT emission, replace the one message the user edited (same role, new text), POST the full array via the SAME edit verb/route. The UI re-states engine truth + the user's input; it decides nothing. Open mechanics for the plan gate: (1) ops.ts edit spec mirrors the route body {id, text} — whether build() grows a raw path or the panel posts the registry op with a programmatic body (the F-046/5c revert-commit precedent: same route, value passed programmatically); (2) which messages are editable in place — plain-text messages verbatim; messages with tool blocks: edit text blocks only vs read-only with a tooltip (lean: text blocks only, blocks preserved byte-identical); (3) menu-pin test rewrite (edit + retitle leave: explicit relocation list); (4) edit stays in the CLI untouched
@@ -695,8 +697,47 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-069 — Position dropdown defaults: move = current location; add = end; never the start
 - reported: 2026-06-11 · class: refinement
-- status: triaged (batch 13 — reviewer P3 on batch 12 caught a premature '(batch 12)' resolution claim here; corrected: NOT implemented yet, queued with F-064(1)/(3))
+- status: fixed@batch-13 (the batch-12 P3 trail below records the earlier premature claim)
 - what: "For menus where you choose where to move a frame, make the current location the default, or the end as default otherwise. never the beginning, as that can break the system prompt check server side iiuc. leave 'beginning' as an option, but not as default"
 - where: position dropdowns (move primarily; add/combine defaults audited)
 - evidence: current defaults — add: "" = at the end ✓; combine: "" = first picked frame's slot (the current-location analogue) ✓; MOVE: "" maps to omit → the daemon refuses ("move needs id and after") — no useful default. Fix: the UI preselects the target's CURRENT emission predecessor (derived from compose's emittedFrameIds — engine truth re-stated, not re-decided) as "keep current position"; "at the start" stays an option, never the default. Edge: a frame already FIRST in emission order — keep-current resolves to start (moving an already-first frame to start changes nothing, so Nil's break-risk doesn't apply); a target absent from emission order (fork-only/deleted) falls back to end-of-list default
-- resolution: (batch 13, planned) move's dropdown defaults to the current location; explicit AFTER semantics unchanged; submit of the unchanged default records a placement pinning the current spot (a deliberate no-visible-change move commit — revert available)
+- resolution: batch 13: opPrefill(move) preselects the target's emission PREDECESSOR (from compose's emittedFrameIds — engine order re-stated, never re-derived) so the dropdown opens on 'keep current position'; a frame already first keeps current = start (the one allowed start default — moving an already-first frame to start changes nothing); a target absent from the emission defaults to the END (after the last emitted frame); no order known → no default, the daemon's refusal speaks. 'at the start' stays an option, never a default elsewhere; add/combine defaults audited unchanged (end / first pick's slot). Submit of the unchanged default records a placement pinning the current spot (deliberate, revertable). Regressions: prefill F-069 ×4 (predecessor / first→start / absent→end / no-ctx→none); op-menu F-069 (dropdown preselected on the predecessor, start still an option, unchanged submit posts {id, after:<pred>})
+
+## F-070 — Restore should only appear on offloaded frames
+- reported: 2026-06-11 · class: design-question (touches the LOCKED no-state-hiding rail — needs Nil's explicit one-off authorization + plan gate)
+- status: awaiting Nil's explicit go (rail tension explained to him)
+- what: "restore op should only appear for offloaded frames, if that's the only case where it applies."
+- where: per-frame ops menu, restore entry
+- evidence: his conditional HOLDS — engine restore() applies ONLY to offloaded frames (refuses everything else: "frame X is not offloaded"). But hiding it by state collides with the standing reviewer-conditioned rail: "ops are never hidden or disabled because of frame STATE — the daemon's refusal is the source of truth" (5b condition, restated in phase5e standing orders). Precedent tension both ways: F-063 filtered can-only-refuse DESTINATIONS (rationale: a destination list, not an op); restore-on-non-offloaded is a deterministic, zero-information refusal — but it IS an op entry. F-045/F-053-style: a narrow Nil-authorized exception is the honest path
+- resolution: options: (a) Nil authorizes the exception → menu shows restore only when summary.offloaded (display-only; CLI untouched; refusals still speak for anything else) — plan gate, then batch; (b) relocation instead of hiding: restore leaves the menu entirely (like edit/retitle) and appears as an affordance ON the offloaded chip/fileReference row in the card/panel — arguably cleaner (the action lives where the state shows) and the menu stays state-blind; (c) keep as-is. My lean: (b). Awaiting his pick
+
+## F-071 — Side-panel title/summary tooltips clip on the right screen edge
+- reported: 2026-06-11 · class: bug (display)
+- status: triaged (batch 14)
+- what: "tooltips for titles and summaries in the side panel get clipped on the right edge of the screen"
+- where: details panel, F-067 edit/regen icon tips
+- evidence: the CSS tooltip (::after) renders left-anchored by default; the panel hugs the right viewport edge. styles.css already keeps a right-edge-aware list (refresh, copy-key, op-menu summary, close, commit-revert, jump-bottom) — the new panel icons never joined it
+- resolution: (batch 14) right-anchor the panel icon tips (and audit every panel tip against the right edge)
+
+## F-072 — No feedback while a field is regenerating
+- reported: 2026-06-11 · class: refinement
+- status: triaged (batch 14)
+- what: "give 'wait' feedback while a field is regenerating, currently you cannot tell if something's happening"
+- where: details panel regen buttons (title/summary)
+- evidence: regen runs a multi-second claude-CLI call server-side; the panel button fires and nothing changes until the refetch lands. The dispatch path returns a promise (App.dispatchOp) — the panel can hold a busy state per button until it settles
+- resolution: (batch 14) regen buttons show an in-flight state (spinner/disabled) until the op settles; applies to both fields; the standing banner still carries refusals
+
+## F-073 — Every op needs a tooltip; tips must not clip against the side panel
+- reported: 2026-06-11 · class: refinement
+- status: triaged (batch 14)
+- what: "add a tool tip for every operation, but make sure they don't get clipped against the side panel, the one for summerize does"
+- where: per-frame ops menu items
+- evidence: only summarize carries a MENU_TIPS tip today (F-065); it clips when the details panel is open (menu sits against the panel edge). Fix both: full jargon-free tip coverage for every menu verb + edge-aware positioning inside the menu
+- resolution: (batch 14) MENU_TIPS covers every menu op (plain language, F-028 jargon ban applies); menu tips anchor away from the panel edge; regression extends the tip scan to all menu items
+
+## F-074 — README: screenshots of all views, self-driven realistic content
+- reported: 2026-06-11 · class: docs request
+- status: triaged (after batch 13 commits; quota note for Nil below)
+- what: "could you add screnshots of all the views to the README, with descriptions? im not sure how you would be able to 'populate' the views with a realistic conversation. is that something you can drive entirely by yourself?"
+- evidence: fully self-drivable: throwaway daemon (own port + tmp store) + a scripted REAL conversation through the proxy (claude CLI turns — small quota burn, ~4-6 turns under the standing grant) or the committed fixture (quota-free but stub-flavored content); Playwright (the ui-smoke machinery) takes deterministic screenshots at a fixed viewport; shots land in docs/screenshots/ and the README gains a per-view gallery with descriptions
+- resolution: planned: scripts/capture-readme-shots.ts — populate (real scripted session: ask → tool turn → offload → split → retitle, so every view shows something meaningful), screenshot conversation/frames/details/history(commits+timeline), commit shots + README section

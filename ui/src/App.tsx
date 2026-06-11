@@ -214,7 +214,15 @@ export function App() {
         const frames = targets
           .map((id) => loaded?.details.get(id))
           .filter((f): f is Frame => f != null);
-        setPendingOp({ op, targets, initial: opPrefill(op, frames) });
+        setPendingOp({
+          op,
+          targets,
+          // F-069: move's keep-current default reads the engine's emission
+          // order (compose's emittedFrameIds), passed as prefill context.
+          initial: opPrefill(op, frames, {
+            emittedFrameIds: loaded?.compose.emittedFrameIds,
+          }),
+        });
       }
     },
     [runOp, loaded],
@@ -252,6 +260,20 @@ export function App() {
     loaded && selectedId
       ? (loaded.frames.find((f) => f.id === selectedId) ?? null)
       : null;
+  // F-064(1) (reviewer P2, batch 13): a structurally-replaced frame has no
+  // card — its details panel must not outlive it on the frames surface.
+  const selectedReplaced = !!(
+    selectedSummary &&
+    (selectedSummary.absorbedInto ||
+      (selectedSummary.splitInto && selectedSummary.splitInto.length > 0))
+  );
+  useEffect(() => {
+    // Clear a selection that became replaced (the post-op refetch removes the
+    // card; the panel goes with it). HISTORY is the deliberate exception: its
+    // frame links may open replaced frames for INSPECTION (read-only below) —
+    // they are the history's subject matter.
+    if (selectedReplaced && view !== "history") setSelectedId(null);
+  }, [selectedReplaced, view]);
 
   const addOp = opByVerb("add")!;
   const revertOp = opByVerb("revert")!;
@@ -267,9 +289,14 @@ export function App() {
   // toolbar that triggered it (revert is param-less — never a form; F-046
   // moved its button to the history tab). Any other view: the top host — a
   // pending form is never invisible.
-  const targetVisible = (id: string) =>
-    showForkOnly ||
-    loaded?.frames.find((f) => f.id === id)?.inLastView !== false;
+  const targetVisible = (id: string) => {
+    const s = loaded?.frames.find((f) => f.id === id);
+    if (!s) return false;
+    // F-064(1): replaced frames have no card at all — a pending form on one
+    // falls back to the top host (never invisible).
+    if (s.absorbedInto || (s.splitInto && s.splitInto.length > 0)) return false;
+    return showForkOnly || s.inLastView !== false;
+  };
   const inlineFormFrameId =
     pendingOp &&
     view === "frames" &&
@@ -289,6 +316,12 @@ export function App() {
         op={pendingOp.op}
         initial={pendingOp.initial}
         frames={loaded?.frames}
+        // F-064(3): the split picker needs the target's full messages.
+        targetFrame={
+          pendingOp.targets.length === 1
+            ? loaded?.details.get(pendingOp.targets[0]!)
+            : undefined
+        }
         onSubmit={(values) => void runOp(pendingOp.op, pendingOp.targets, values)}
         onCancel={() => setPendingOp(null)}
       />
@@ -495,16 +528,31 @@ export function App() {
             onClose={() => setSelectedId(null)}
             // F-067: inline title/summary editing — the retitle verb, built by
             // the registry (title/summary/regen are its params).
-            onRetitle={(values) => void runOp(retitleOp, [selected.id], values)}
+            // F-064(1) reviewer P2: a REPLACED frame (reachable only via
+            // history links) renders READ-ONLY — no edit affordances (the
+            // panel keys them off these callbacks' presence).
+            onRetitle={
+              selectedReplaced
+                ? undefined
+                : (values) => void runOp(retitleOp, [selected.id], values)
+            }
             // F-068: per-message editing — the edit verb with a programmatic
             // {id, raw} body: the CURRENT emission with ONLY message i's text
             // replaced (replaceMessageText preserves every untouched byte and
             // the edited message's shape).
-            onEditMessage={(index, text) => {
-              const raw = replaceMessageText(currentEmission(selected), index, text);
-              if (raw === null) return; // not plain-text-editable — icon never offered
-              void dispatchOp(editOp, [selected.id], { id: selected.id, raw });
-            }}
+            onEditMessage={
+              selectedReplaced
+                ? undefined
+                : (index, text) => {
+                    const raw = replaceMessageText(
+                      currentEmission(selected),
+                      index,
+                      text,
+                    );
+                    if (raw === null) return; // not plain-text-editable — icon never offered
+                    void dispatchOp(editOp, [selected.id], { id: selected.id, raw });
+                  }
+            }
           />
         )}
       </main>

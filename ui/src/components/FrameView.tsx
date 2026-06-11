@@ -42,10 +42,18 @@ export function FrameView(props: {
   /** Zero-target op form (add) renders right under the toolbar. */
   toolbarForm?: ReactNode;
 }) {
-  const forkCount = props.frames.filter((f) => f.inLastView === false).length;
+  // F-064(1) (Nil: "they literally dont exist anymore after being replaced,
+  // thats what replaced means"): structurally-replaced frames — combine parts
+  // and split originals — are REMOVED from this view, no toggle (unlike
+  // F-006's fork-only hiding). The engine still holds them as match targets;
+  // reverting the combine/split from the history tab brings them back live.
+  const present = props.frames.filter(
+    (f) => !f.absorbedInto && !(f.splitInto && f.splitInto.length > 0),
+  );
+  const forkCount = present.filter((f) => f.inLastView === false).length;
   const visible = props.showForkOnly
-    ? props.frames
-    : props.frames.filter((f) => f.inLastView !== false);
+    ? present
+    : present.filter((f) => f.inLastView !== false);
   return (
     <section className="frame-view" aria-label="frame view">
       <div className="store-ops frame-toolbar">

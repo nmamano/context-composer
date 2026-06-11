@@ -13,9 +13,30 @@ import { deriveSummary } from "../../src/engine/offload.ts";
 import { currentEmission } from "./transcript.ts";
 import type { FormValues } from "./components/OpMenu.tsx";
 
-export function opPrefill(op: OpSpec, targets: Frame[]): FormValues {
+export function opPrefill(
+  op: OpSpec,
+  targets: Frame[],
+  /** F-069: move's default needs the ENGINE's emission order (compose's
+   *  emittedFrameIds — re-stated, never re-derived). */
+  ctx?: { emittedFrameIds?: string[] },
+): FormValues {
   if (targets.length !== 1) return {};
   const f = targets[0]!;
+  if (op.verb === "move") {
+    // F-069 (Nil): the dropdown defaults to the frame's CURRENT location —
+    // its emission predecessor — so an accidental submit changes nothing
+    // visible. Never default to the start (Nil's server-side concern); the
+    // one exception is a frame ALREADY first, where keep-current IS start
+    // and moving it there changes nothing. A target absent from the emission
+    // (fork-only/deleted) defaults to the end (after the last emitted frame);
+    // no order known → no default (the daemon's refusal speaks on submit).
+    const order = ctx?.emittedFrameIds ?? [];
+    const idx = order.indexOf(f.id);
+    if (idx > 0) return { after: order[idx - 1]! };
+    if (idx === 0) return { after: "start" };
+    const last = order[order.length - 1];
+    return last !== undefined ? { after: last } : {};
+  }
   if (op.verb === "offload") {
     // Mirrors state.ts offload() (F-017): opts.summary ?? f.summary (the
     // ingest-enrichment auto-summary) ?? deriveSummary(emission) ?? fallback.

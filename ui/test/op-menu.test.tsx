@@ -250,7 +250,7 @@ test("param-less op (delete) POSTs the registry body and refetches both views' s
   expect(getCounts["/control/compose"]).toBe(composeBefore + 1);
 });
 
-test("param op (split) opens the generated form and maps values via build()", async () => {
+test("param op (split) — F-064(3): boundaries are PICKED on the messages; build() maps the ticks", async () => {
   const { container, act } = await renderApp();
   await openFrameView(container, act);
   const split = container.querySelector(
@@ -259,12 +259,20 @@ test("param op (split) opens the generated form and maps values via build()", as
   await act(async () => click(split));
   const form = container.querySelector('.op-form[data-op="split"]')!;
   expect(form).not.toBeNull();
-  // Required param empty → submit disabled (presence-only gating).
+  // F-064(3): the picker shows the frame's messages with indices and a "cut
+  // here" tick per boundary (f2 has 2 messages → exactly 1 boundary).
+  const picker = form.querySelector(".split-picker")!;
+  expect(picker).not.toBeNull();
+  expect(picker.querySelectorAll(".split-msg")).toHaveLength(2);
+  expect(picker.textContent).toContain("#0");
+  expect(picker.textContent).toContain("two answered"); // message preview text
+  const cuts = picker.querySelectorAll(".split-cut input");
+  expect(cuts).toHaveLength(1);
+  // Nothing ticked → submit disabled (presence-only gating, unchanged).
   const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
   expect(submit.disabled).toBe(true);
-  const input = form.querySelector("input[type=\"text\"]") as HTMLInputElement;
-  expect(input.value).toBe("");
-  await act(async () => setNativeValue(input, "1"));
+  await act(async () => click(cuts[0]!));
+  expect((form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(false);
   await act(async () => click(form.querySelector('button[type="submit"]')!));
   for (let i = 0; i < 4; i++) {
     await act(async () => {
@@ -273,7 +281,7 @@ test("param op (split) opens the generated form and maps values via build()", as
   }
   expect(posts).toHaveLength(1);
   expect(posts[0]!.path.startsWith("/control/split?conv=conv-1")).toBe(true);
-  expect(posts[0]!.body).toEqual({ id: "f2", at: [1] });
+  expect(posts[0]!.body).toEqual({ id: "f2", at: [1] }); // same wire shape as ever
 });
 
 test("refusal renders the daemon's text VERBATIM, sticky until dismissed; refetch still runs", async () => {
@@ -759,4 +767,125 @@ test("F-068: message edit posts the FULL raw emission with only the edited messa
   expect(JSON.stringify(body.raw[1])).toBe(
     JSON.stringify((shows.f2 as { messages: unknown[] }).messages[1]),
   );
+});
+
+// ── F-069: move's dropdown defaults to the frame's current location ──────────
+
+test("F-069: move opens preselected on the emission predecessor; unchanged submit keeps the spot", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () =>
+    click(container.querySelector('.op-menu[data-frame-id="f2"] button[data-verb="move"]')!),
+  );
+  const form = container.querySelector('.op-form[data-op="move"]')!;
+  const pos = form.querySelector("select") as HTMLSelectElement;
+  // emittedFrameIds = [f1, f2] → f2's predecessor is f1 (keep current position).
+  expect(pos.value).toBe("f1");
+  // "at the start" remains an OPTION, just never the default (Nil).
+  expect(Array.from(pos.options).some((o) => o.value === "start")).toBe(true);
+  await act(async () => click(form.querySelector('button[type="submit"]')!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ id: "f2", after: "f1" });
+});
+
+// ── F-064(1): structurally-replaced frames don't exist in the frame view ─────
+
+test("F-064(1): absorbed parts and split originals have NO card (no toggle); they stay valid anchors", async () => {
+  const extras = [
+    { ...baseSummary, id: "f3", title: "absorbed part", tokenEstimate: 0, absorbedInto: "f9" },
+    { ...baseSummary, id: "f4", title: "split original", tokenEstimate: 0, splitInto: ["f7", "f8"] },
+  ];
+  frames.push(...(extras as unknown as typeof frames));
+  shows.f3 = { ...baseFrame, id: "f3", title: "absorbed part", tokenEstimate: 0, absorbedInto: "f9", messages: [{ role: "user", content: "x" }] };
+  shows.f4 = { ...baseFrame, id: "f4", title: "split original", tokenEstimate: 0, splitInto: ["f7", "f8"], messages: [{ role: "user", content: "y" }] };
+  try {
+    const { container, act } = await renderApp();
+    await openFrameView(container, act);
+    const ids = Array.from(container.querySelectorAll(".frame-card")).map((c) =>
+      c.getAttribute("data-frame-id"),
+    );
+    expect(ids).toEqual(["f1", "f2"]); // replaced frames gone — not hidden, GONE
+    expect(container.querySelector(".fork-toggle")).toBeNull(); // and no toggle implies them
+    // F-047 tension, pinned deliberately: absorbed parts REMAIN valid position
+    // anchors (they keep their order-spine slot) even with no card.
+    await act(async () => click(container.querySelector(".store-ops .op-add")!));
+    const addPos = container.querySelector('.op-form[data-op="add"] select') as HTMLSelectElement;
+    const values = Array.from(addPos.options).map((o) => o.value);
+    expect(values).toContain("f3");
+    expect(values).toContain("f4");
+  } finally {
+    frames.splice(2);
+    delete shows.f3;
+    delete shows.f4;
+  }
+});
+
+// ── F-064(1) reviewer P2 (batch 13): the details panel must not outlive the card ─
+
+test("F-064(1)/P2: a selection that BECOMES replaced clears with the refetch (frames surface)", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () => click(container.querySelector('.frame-card[data-frame-id="f1"]')!));
+  expect(container.querySelector(".details-panel")).not.toBeNull();
+  // A combine absorbs f1 elsewhere; the next refetch reflects it.
+  const f1 = frames[0]! as { absorbedInto: string | null };
+  f1.absorbedInto = "f9";
+  try {
+    const refresh = container.querySelector(".topbar .refresh")!;
+    await act(async () => click(refresh));
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    // Card gone AND the panel went with it — no stale editing surface.
+    expect(container.querySelector('.frame-card[data-frame-id="f1"]')).toBeNull();
+    expect(container.querySelector(".details-panel")).toBeNull();
+  } finally {
+    f1.absorbedInto = null;
+  }
+});
+
+test("F-064(1)/P2: history frame links open a replaced frame READ-ONLY; frames view clears it", async () => {
+  const f1 = frames[0]! as { absorbedInto: string | null };
+  f1.absorbedInto = "f9";
+  history.push({
+    id: "c9",
+    type: "combine",
+    affectedFrameIds: ["f1"],
+    params: {},
+    note: null,
+    branchId: null,
+    parentCommitId: null,
+    timestamp: "t9",
+  });
+  try {
+    const { container, act } = await renderApp();
+    const historyTab = Array.from(container.querySelectorAll(".view-toggle button")).find(
+      (b) => b.textContent === "history",
+    )!;
+    await act(async () => click(historyTab));
+    // The history's subject matter: the replaced frame stays inspectable…
+    await act(async () => click(container.querySelector("button.frame-link")!));
+    const panel = container.querySelector(".details-panel")!;
+    expect(panel).not.toBeNull();
+    expect(panel.textContent).toContain("alpha");
+    // …but READ-ONLY: no metadata or message edit affordances, no freeze note.
+    expect(panel.querySelector(".edit-title")).toBeNull();
+    expect(panel.querySelector(".regen-title")).toBeNull();
+    expect(panel.querySelector(".edit-summary")).toBeNull();
+    expect(panel.querySelector('[aria-label="edit message 0"]')).toBeNull();
+    expect(panel.querySelector(".freeze-note")).toBeNull();
+    // Returning to the frames surface clears the replaced selection.
+    await openFrameView(container, act);
+    expect(container.querySelector(".details-panel")).toBeNull();
+  } finally {
+    f1.absorbedInto = null;
+    history.splice(0);
+  }
 });

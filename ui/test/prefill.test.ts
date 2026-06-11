@@ -115,3 +115,30 @@ test("edit (panel-relocated) and other verbs prefill nothing", () => {
     expect(opPrefill(opByVerb(verb)!, [frame()])).toEqual({});
   }
 });
+
+// --- F-069: move's dropdown defaults to the frame's CURRENT location --------
+
+const move = opByVerb("move")!;
+
+test("F-069: move prefills the emission predecessor (keep current position)", () => {
+  expect(
+    opPrefill(move, [frame({ id: "f2" })], { emittedFrameIds: ["f1", "f2", "f3"] }),
+  ).toEqual({ after: "f1" });
+});
+
+test("F-069: a frame already FIRST keeps current = start (the one allowed start default — a no-op)", () => {
+  expect(
+    opPrefill(move, [frame({ id: "f1" })], { emittedFrameIds: ["f1", "f2"] }),
+  ).toEqual({ after: "start" });
+});
+
+test("F-069: a target absent from the emission (fork-only/deleted) defaults to the END", () => {
+  expect(
+    opPrefill(move, [frame({ id: "f9" })], { emittedFrameIds: ["f1", "f2"] }),
+  ).toEqual({ after: "f2" });
+});
+
+test("F-069: no emission order known → no default (the daemon's refusal speaks)", () => {
+  expect(opPrefill(move, [frame({ id: "f1" })])).toEqual({});
+  expect(opPrefill(move, [frame({ id: "f1" })], { emittedFrameIds: [] })).toEqual({});
+});
