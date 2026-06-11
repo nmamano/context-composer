@@ -1086,7 +1086,7 @@ rule lives or dies on this gate).
   scale (graduate to Cytoscape/Vis only if the tree gets large).
 - **Size:** L.
 - **Status:** **Built and live-validated (2026-06-10), in its SINGLE-BRANCH form** (per the
-  re-sequencing note above Phase 4 — Phase 5 ran before branching). Landed across three
+  re-sequencing note above Phase 4 — Phase 5 ran before branching). Landed across four
   slices, each reviewer-signed (plan + diff, zero unresolved findings):
   - **5a** (`5b18570`) — daemon-served `ui/` React app at `GET /ui/*` (same origin as
     `/control`, passthrough invariant preserved + route-table-tested); conversation view
@@ -1106,14 +1106,26 @@ rule lives or dies on this gate).
     views update" proven in a real browser (quota-free op smoke; LLM env scrubbed so
     regen clicks are refusals). First DUAL-CLIENT gate: real TUI + browser on one
     daemon, browser surgery, next unaware turn wiretap-verified.
-  - **5c** — history tab (commits | timeline sub-toggle): commit log with two-column
-    before/after diffs, derived reverted-marking (client-side over `params.
+  - **5c** (`ca2d120`) — history tab (commits | timeline sub-toggle): commit log with
+    two-column before/after diffs, derived reverted-marking (client-side over `params.
     revertedCommitId` — display state, not a new source of truth), click-to-revert any
     commit ({} stays HEAD for the topbar; refusal catalog reachable — guards speak);
     timeline = full audit log incl. captures. Extended dual-client beat: browser
     offload + edit + history-panel revert mid-session; the next TUI turn's wire carried
     the stub (with artifact fileReference) and the reverted edit's restored source,
     upstream 200. `checkout` and branch/tree visualization remain parked with Phase 4.
+  - **5d** (`9fdfeeb`) — regen via SUBSCRIPTION: the LLM-backed op paths (`--regen` on
+    compact/summarize/retitle) gain a `claude`-CLI client so they run on the user's
+    existing subscription session — no API key; the API-key client remains the
+    alternative. Default daemon/test posture stays quota-free (explicit env gates).
+- **Phase 5e (ongoing):** live UI-refinement loop — Nil tests the real UI; every report
+  is recorded in `plans/ui-feedback.md` (the durable feedback ledger: F-numbered items,
+  statuses, fix evidence), triaged, fixed in small reviewer-gated batches (process:
+  `plans/phase5e-feedback-loop.md`). Highlights so far: ingest enrichment (auto
+  titles/summaries, opt-in, with bounded re-enrichment on material content growth),
+  conversation "active" redefined as most-recent wire activity, capture event
+  request/reply subtypes, and a steady stream of UI/UX fixes — see the ledger for the
+  authoritative item-by-item record.
 
 ### Phase 6 — Demo polish + blog
 
