@@ -536,3 +536,34 @@ test("proxy: WITHOUT the enrich opt nothing enriches (default quota-free posture
     stub.stop();
   }
 });
+
+// ── F-064(2) reviewer adjustment: auto-enrichment is captured-origin only ────
+// A split child with a derived title but NULL summary would otherwise read as
+// fill-state and could burn a quota call. The origin guard makes the invariant
+// explicit in enrichEligible itself, not just at the queue call-site.
+
+test("F-064(2): manufactured frames are never enrich-eligible (split child with null summary included)", async () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1, a1] }); // one turn frame, 2 messages
+  s.retitle("t1", { title: "Parent" }); // no summary — children stay summary-null
+  expect(s.split("t1", [1]).ok).toBe(true);
+  const [c1] = s.show("t1")!.splitInto!;
+  expect(s.show(c1!)!.summary ?? null).toBeNull(); // fill-state shape…
+  expect(s.enrichEligible(c1!)).toBe(false); // …but origin 'split' → never eligible
+  // Belt and braces: the queue burns nothing on it either.
+  let calls = 0;
+  const q = new EnrichmentQueue(
+    stubLlm(async () => {
+      calls++;
+      return GOOD;
+    }),
+    "stub",
+    () => {},
+  );
+  await q.enqueue(s, "c1", c1!);
+  expect(calls).toBe(0);
+  // An ADDED frame (also manufactured) is equally ineligible.
+  expect(s.add({ text: "user note" }).ok).toBe(true);
+  const added = s.list().find((f) => f.origin === "added")!;
+  expect(s.enrichEligible(added.id)).toBe(false);
+});

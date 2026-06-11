@@ -494,3 +494,77 @@ test("F-047: revert of a PLACED combine restores the parts in natural order", ()
   expect(w.indexOf("alpha")).toBeLessThan(w.indexOf("beta"));
   expect(w.indexOf("beta")).toBeLessThan(w.indexOf("gamma"));
 });
+
+// ── F-064(2) (Nil-decided, plan-gated): split children inherit derived metadata ─
+// "<original title> (part i/N)" + the original's summary verbatim — deterministic,
+// no LLM, no enrichment record (split metadata is not auto-enrichment).
+
+test("F-064(2): split children inherit '(part i/N)' titles + the original's summary; original untouched", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("q1"), a("r1")] }); // one turn frame, 2 messages
+  s.retitle("t1", { title: "API key rotation", summary: "how to rotate keys" });
+  const r = s.split("t1", [1]);
+  expect(r.ok).toBe(true);
+  const [c1, c2] = s.show("t1")!.splitInto!;
+  expect(s.show(c1!)!.title).toBe("API key rotation (part 1/2)");
+  expect(s.show(c2!)!.title).toBe("API key rotation (part 2/2)");
+  expect(s.show(c1!)!.summary).toBe("how to rotate keys");
+  expect(s.show(c2!)!.summary).toBe("how to rotate keys");
+  // The original keeps ITS metadata exactly (it remains the match target).
+  expect(s.show("t1")!.title).toBe("API key rotation");
+  expect(s.show("t1")!.summary).toBe("how to rotate keys");
+  // Derived metadata is NOT an enrichment record (F-062 ownership untouched).
+  expect(s.show(c1!)!.enrichment ?? null).toBeNull();
+  expect(s.show(c2!)!.enrichment ?? null).toBeNull();
+});
+
+test("F-064(2): N=3 numbering; a summary-less original leaves children summary-null", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("q1"), a("r1")] });
+  // Grow the EMISSION to 3 messages via an edit override (split reads
+  // representation ?? messages), then cut twice.
+  expect(
+    s.edit("t1", {
+      raw: [
+        { role: "user" as const, content: "m0" },
+        { role: "assistant" as const, content: "m1" },
+        { role: "user" as const, content: "m2" },
+      ],
+    }).ok,
+  ).toBe(true);
+  s.retitle("t1", { title: "Long session" }); // title only — summary stays null
+  expect(s.split("t1", [1, 2]).ok).toBe(true);
+  const ids = s.show("t1")!.splitInto!;
+  expect(ids).toHaveLength(3);
+  ids.forEach((cid, i) => {
+    expect(s.show(cid)!.title).toBe(`Long session (part ${i + 1}/3)`);
+    expect(s.show(cid)!.summary ?? null).toBeNull();
+  });
+});
+
+test("F-064(2): a long original title truncates but the '(part i/N)' suffix is preserved exactly", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("q1"), a("r1")] });
+  const long = "x".repeat(200);
+  s.retitle("t1", { title: long });
+  expect(s.split("t1", [1]).ok).toBe(true);
+  const [c1] = s.show("t1")!.splitInto!;
+  const title = s.show(c1!)!.title;
+  expect(title.endsWith(" (part 1/2)")).toBe(true);
+  expect(title.length).toBeLessThanOrEqual(80);
+  expect(title.startsWith("xxx")).toBe(true);
+  expect(title).toContain("…"); // the inherited portion, truncated — never the suffix
+});
+
+test("F-064(2): derived metadata survives a snapshot restart", () => {
+  const path = join(dir, "store.json");
+  const s = new FrameStore(new JsonFileStore(path), "test", join(dir, "frames"));
+  s.ingest({ ...HEAD, messages: [u("q1"), a("r1")] });
+  s.retitle("t1", { title: "Durable", summary: "sum" });
+  expect(s.split("t1", [1]).ok).toBe(true);
+  const s2 = new FrameStore(new JsonFileStore(path), "test", join(dir, "frames"));
+  const [c1, c2] = s2.show("t1")!.splitInto!;
+  expect(s2.show(c1!)!.title).toBe("Durable (part 1/2)");
+  expect(s2.show(c2!)!.title).toBe("Durable (part 2/2)");
+  expect(s2.show(c1!)!.summary).toBe("sum");
+});

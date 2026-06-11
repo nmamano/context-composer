@@ -101,6 +101,19 @@ const SUGGESTION_MARKER = "[SUGGESTION MODE";
  *  churn (ephemeral reminder blocks) can keep changing the content signature. */
 const ENRICH_RUNS_CAP = 2;
 
+/** F-064(2): engine-local display-title cap for derived split-child titles —
+ *  deliberately NOT imported from the proxy's enrich module (the engine stays
+ *  independent of the server layer). The " (part i/N)" suffix is preserved
+ *  exactly; only the inherited title portion truncates. */
+const CHILD_TITLE_MAX = 80;
+function splitChildTitle(original: string, i: number, n: number): string {
+  const suffix = ` (part ${i}/${n})`;
+  const room = CHILD_TITLE_MAX - suffix.length;
+  const base =
+    original.length > room ? `${original.slice(0, Math.max(0, room - 1))}…` : original;
+  return `${base}${suffix}`;
+}
+
 /** F-053 (Phase 5e, Nil-authorized 2026-06-10; reviewer-gated): brittle
  *  exception #2 to the locked "no content heuristics" principle. Claude Code
  *  embeds an `x-anthropic-billing-header: ...; cch=...;` line in the system
@@ -812,6 +825,15 @@ export class FrameStore {
     ranges.push(structuredClone(emission.slice(start)));
 
     const children = ranges.map((r) => this.makeManufactured("split", r));
+    // F-064(2) (Nil-decided, plan-gated): children inherit DERIVED metadata —
+    // "<original title> (part i/N)" + the original's summary verbatim — instead
+    // of makeFrame placeholders. Deterministic, no LLM; deliberately NOT an
+    // enrichment record (these are split metadata, not auto-enrichment — and
+    // enrichEligible is captured-origin-only, so children never burn quota).
+    children.forEach((c, i) => {
+      c.title = splitChildTitle(f.title, i + 1, children.length);
+      if (f.summary != null) c.summary = f.summary;
+    });
     const childIds = children.map((c) => c.id);
     const commit = this.makeCommit(
       "split",
@@ -984,6 +1006,12 @@ export class FrameStore {
   enrichEligible(id: string): boolean {
     const f = this.show(id);
     if (!f || f.kind !== "turn" || f.deleted) return false;
+    // F-064(2) reviewer adjustment (explicit invariant): auto-enrichment is a
+    // LIVE-CAPTURE mechanism — manufactured frames (added/combined/split) are
+    // never eligible. Without this, a split child whose summary is null would
+    // read as fill-state and could burn a quota call if it ever reached the
+    // queue; with it the invariant holds by construction, not by call-site.
+    if (f.origin !== "captured") return false;
     const a = this.enrichApplicable(f);
     if (!a.title && !a.summary) return false;
     const fill =
