@@ -591,17 +591,22 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-058 — "Active" conversation ranking contradicts intuition ("the active one is c5, that's who i'm talking to")
 - reported: 2026-06-11 · class: design-question
-- status: awaiting Nil's pick (then plan gate — engine ranking + CLI default targeting)
+- status: fixed@batch-G
 - what: "what does active even mean? the active one is c5, that's who im talking to in claude now. if active is meaningless, just remove that concept i guess?"
 - where: engine registry "active" ranking (most TOTAL turn frames incl. tombstones → live tokens → recency); consumed by CLI default targeting (every store-scoped verb without --conv) and the switcher's "· active" badge
 - expected: TBD by Nil — to him active should mean "the conversation I'm talking to right now"
 - evidence: c3 (11 turns, idle) outranks c5 (his live session). The turns-first ranking exists for a reason (P1 fix: deleting frames must never demote the active conversation — live-frame counting caused exactly that), but turns-first makes long-idle conversations sticky
 - resolution: options: (a) REDEFINE active = most recent ingest (lastIngestAt), tombstone-safe by construction (deletes don't touch ingest time) — matches intuition; small race: a session's title side-call ingests ms before the real first turn, self-heals on the first reply capture; (b) REMOVE the concept — CLI would always require --conv (worse for the terminal-scalpel flow), F-057 already freed the UI from it; (c) keep as-is. My lean: (a). Engine+CLI semantics → Nil picks, then plan gate
 - decided (Nil, 2026-06-11): option (a) — redefine active = most recent ingest. Plan-gate next
+- plan-gate GO (Context Reviewer, 2026-06-11): variant A2 — active = most recent wire ACTIVITY (request ingest OR reply capture), not ingest alone, so the F-054 title-side-call race self-heals when the main reply lands instead of waiting for the user's next turn. Required adjustment adopted: registry.touch() also refreshes lastIngestAt (no stale timestamp on the active winner in `ctx conversations`/the UI). REGISTRY_VERSION stays 3 (JSON shape unchanged; fields keep their "ingest" names, documented as last-activity).
+- implementation (batch G): registry.ts activeRecord ranks lastIngestSeq DESC (ties — never-touched seq-0 records only, kept for a total order — fall back to the old totalTurnFrames → tokens pair); new touch(rec) bumps seq + lastIngestAt; proxy calls registry.touch(conv) immediately before store.captureAssistant so the capture-triggered store persist writes the bumped seq in the same registry write. Deletes never bump the seq — the P1 demote regression is impossible by construction (still pinned). CLI/UI mechanically unchanged (they follow activeRecord). design.md + registry.ts header rewritten to the new semantics.
+- RESIDUAL (accepted, recorded per reviewer): a side conversation whose reply settles AFTER the main thread's reply becomes active by design — most-recent-activity IS the semantics; the main thread retakes `active` at its next request or reply. The observed F-054 shape (side ingests 23ms after main's request, side reply settles fast, main reply settles last) self-heals in seconds.
+- regressions: conversations.test.ts — F-058a race leg (later side ingest steals active; touch retakes it; explicit ?conv unaffected throughout; touch refreshes lastIngestAt off a sentinel; tombstone-safety non-vacuous delete-all leg); restart durability (persisted seq → same active after reload; resumed main retakes); early-edge pin REWRITTEN to the new truth (side IS active right after its send — the residual, named); P1 delete-all test re-staged (side first, main most-recent) and green
+- reviewer finding (P3, fixed pre-commit): `ctx conversations` still printed the timestamp column as "last ingest" — under A2 that value refreshes on reply capture too, so the label would re-create the F-058 confusion on the exact surface users consult for default targeting. Fixed: column reads "last activity", legend reads "(* = active = most recent activity — store-scoped verbs target it; override with --conv <id>)". Regression: conversations.test.ts CLI subprocess assertion (the batch-E harness pattern) pins "last activity" + the legend and bans "last ingest"
 
 ## F-059 — Should refresh re-establish view annotations after a daemon restart?
 - reported: 2026-06-11 · class: design-question
-- status: fixed@batch-11 (option c — pure-UI hint; the locked derived-per-request decision untouched)
+- status: fixed@65290ff (batch 11, option c — pure-UI hint; the locked derived-per-request decision untouched)
 - what: "it works, but confusing..? i feel like the refresh button should also trigger this annotation, or does that break the flow?"
 - where: inLastView after daemon restart; refresh button
 - expected: TBD by Nil
@@ -613,7 +618,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-060 — Edit form should be prefilled with the frame's current content
 - reported: 2026-06-11 (Nil's "10.1") · class: refinement
-- status: fixed@batch-11
+- status: fixed@65290ff (batch 11)
 - what: "the edit menu should be pre-filled with the current content."
 - where: edit op form
 - evidence: pure UI (prefill.ts, the F-003 pattern). Care: --text replaces the frame's emission with ONE message — prefill must be faithful-on-unchanged-submit. Single text-bearing-message emissions prefill verbatim; multi-message emissions get no text prefill (a flattened prefill would silently restructure on submit)
@@ -621,7 +626,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-061 — Compact form is confusing; should work like offload (prefilled editable summary)
 - reported: 2026-06-11 (Nil's "10.2") · class: refinement
-- status: fixed@batch-11
+- status: fixed@65290ff (batch 11)
 - what: "I don't understand the compact menu. What is 'summary text'? what does 'regen (LLM)' do? (tooltip would be good.) What happens if you use both? How is 'summary text' different than just 'edit'? ... maybe: the LLM summary is generated automatically, and optionally the user can edit it. Note: the offloading op does this correctly."
 - evidence: pure-UI fix available: prefill compact's text with the same chain offload uses (frame auto-summary ?? deterministic derive) + plain tooltips. PRECEDENCE CORRECTED at implementation (the triage note above had it backwards): both ops.ts build() and the daemon's /control/compact route let REGEN win when both are set — verified in source; the tooltip states "when ticked, the text box is ignored"
 - resolution: batch 11: compact's text prefills f.summary ?? deriveSummary(current emission) — a starting value per Nil's standing prefill principle (NOT an engine-default preview: compact has no server-side text default; offload's literal fallback is not borrowed). Form gains a one-line explainer ("Shrink what the model sees: this frame's content is replaced by a short summary in the conversation sent to the model. Undo from the history tab.") + instant tips on both fields (UI-side PARAM_TIPS map in OpMenu.tsx — presentation, ops.ts untouched). Regressions: prefill.test.ts F-061 ×3 (summary-wins, derive fallback incl. representation, empty-when-underivable); op-menu F-061 (explainer, prefill through the form, tips non-empty + jargon-ban, regen-precedence tip pinned)
@@ -636,7 +641,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-063 — Position dropdowns offer destinations that can only refuse (deleted frames; fork-only questionable)
 - reported: 2026-06-11 (Nil's "10.4") · class: refinement
-- status: fixed@batch-11
+- status: fixed@65290ff (batch 11)
 - what: "trying to move a frame after a deleted frame fails. that's ok, but maybe it shouldn't be an option ... i think fork-only frames should be excluded as well"
 - evidence: pure UI — the shared position dropdown lists every loaded frame. RAIL NOTE: ops are never hidden by frame state (guards speak), but this filters a DESTINATION list, not an op; same distinction as F-006 (card visibility ≠ op availability). Refusals still render verbatim for anything else invalid. FOUND AT IMPLEMENTATION: the dropdowns also offered the PREAMBLE, and "after p0" can ONLY refuse — state.ts add/move/combine all validate anchors via `this.frames.some(...)`, which the preamble is not part of ("--after target p0 does not exist"). Same class as Nil's report → folded in
 - resolution: batch 11: new pure helper positionAnchors() (ui/src/flags.ts) filters deleted + fork-only (strictly false) + preamble from BOTH position dropdowns (the shared param renderer in OpMenu.tsx and the combine panel's own in FrameView.tsx). Absorbed parts / split originals STAY — valid anchors by design (F-047: they keep their order-spine slot). Regressions: op-menu F-063 (both dropdowns offer exactly ["", "start", live main-thread ids]); ui:smoke add-dropdown options vs API-derived viable list (6 of 8 in the smoke store — preamble + tombstone excluded live)

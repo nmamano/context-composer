@@ -446,10 +446,13 @@ async function cmdConversations(_args: string[]): Promise<void> {
     const fork = c.forkFrames > 0 ? `  (${c.forkFrames} fork-only — see \`ctx list\`)` : "";
     const warn = c.suspicious ? `  ⚠ ${c.suspicious.reason} (${c.suspicious.frameCount} frames at first contact)` : "";
     console.log(
-      `${mark} ${c.id.padEnd(4)} ${turns.padEnd(34)} ${String(c.tokenEstimate).padStart(7)}tok  last ingest ${c.lastIngestAt ?? "(never)"}${fork}${warn}`,
+      // F-058a (reviewer finding, batch G): the timestamp refreshes on reply
+      // capture too (registry.touch), so the label says ACTIVITY — calling a
+      // reply-capture time "last ingest" would re-create the F-058 confusion.
+      `${mark} ${c.id.padEnd(4)} ${turns.padEnd(34)} ${String(c.tokenEstimate).padStart(7)}tok  last activity ${c.lastIngestAt ?? "(never)"}${fork}${warn}`,
     );
   }
-  console.log("(* = active — the conversation store-scoped verbs target; override with --conv <id>)");
+  console.log("(* = active = most recent activity — store-scoped verbs target it; override with --conv <id>)");
 }
 
 async function cmdRevert(args: string[]): Promise<void> {

@@ -819,9 +819,16 @@ rule lives or dies on this gate).
     (deferred/MCP loading) — keying on either forks the conversation and strands the
     user's edits. Known collision (accepted, visible in `ctx conversations`): two
     distinct conversations opening with a byte-identical first message. Control routes
-    target the **active** conversation — most live turn frames, tie → largest token
-    estimate (so a one-shot probe/title query can't steal `active` by recency right
-    after the first real turn), tie → most recent ingest; the resolved conv id is
+    target the **active** conversation — the most **recent wire activity** wins
+    (F-058a, Nil-decided 2026-06-11: "active" = the conversation being talked to right
+    now): the registry's activity seq is bumped on every request ingest and every
+    reply capture, so a one-shot probe/title side-call that ingests ms after the main
+    thread's request only holds `active` until the main reply lands seconds later
+    (accepted residual: a side reply settling after the main reply takes `active`
+    until the main thread's next activity). Deletes never bump the seq — deleting
+    frames cannot demote the conversation being curated (by construction). Ties
+    (never-touched records only) fall back to most total turn frames incl.
+    tombstones, then live tokens; the resolved conv id is
     echoed in every control response so the selection is always observable.
     `?conv=<id>` / `ctx --conv` overrides, `ctx conversations` lists. Durable snapshot
     v3 = the registry file; same no-migrations policy. A new conversation created from

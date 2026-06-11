@@ -255,6 +255,12 @@ export function startProxy(opts: {
     lastCapture = capture
       .then((c) => {
         if (c) {
+          // F-058a (A2): a reply landing is wire activity — bump the registry
+          // seq BEFORE captureAssistant so the store persist it triggers
+          // writes the new seq in the same registry write. This is what lets
+          // the main thread retake `active` from a title/probe side-call that
+          // ingested ms after its request (F-054).
+          registry.touch(conv);
           store.captureAssistant(c, targetId);
           // Engine batch A: the turn is now complete (user + assistant) —
           // generate its display metadata asynchronously. Fire-and-forget:

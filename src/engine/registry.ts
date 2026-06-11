@@ -28,12 +28,20 @@
 // identically through one proxy) — visible in `ctx conversations` + the wiretap;
 // out of scope for the tracer.
 //
-// The CLI operates on the ACTIVE conversation by default: most TOTAL turn frames
-// including tombstones (deletion is curation, not abandonment — deleting frames must
-// never demote the conversation being curated), tie → largest live token estimate
-// (a real session's preamble dwarfs one-shot probes), tie → most recent ingest.
-// Every control route takes ?conv=<id> to override; /control/conversations lists
-// them all, and every store-scoped response echoes the resolved conv id.
+// The CLI operates on the ACTIVE conversation by default: the most RECENT WIRE
+// ACTIVITY wins (F-058a, Nil-decided 2026-06-11, reviewer-gated A2) —
+// lastIngestSeq is bumped on every request ingest (route) AND every reply
+// capture (touch), so "active" means the conversation being talked to right
+// now. Deletes never bump the seq, so deleting frames cannot demote the
+// curated conversation (the P1 invariant, now by construction). Ties — only
+// possible between never-touched records (seq 0), kept for a total order —
+// fall back to the previous ranking: most total turn frames incl. tombstones,
+// then live tokens. Known residual (accepted): a side conversation whose
+// reply settles AFTER the main thread's reply becomes active by design —
+// most-recent-activity is the semantics, and the main thread retakes it at
+// its next request or reply. Every control route takes ?conv=<id> to
+// override; /control/conversations lists them all, and every store-scoped
+// response echoes the resolved conv id.
 //
 // Durability: ONE registry file (REGISTRY_VERSION 3) holding every conversation's
 // StoreSnapshot. Same policy as before — no migrations; a foreign version fails
@@ -64,6 +72,9 @@ export interface ConvWarning {
 interface ConvRecord {
   id: string; // c1, c2, … — stable, user-facing
   key: string | null; // null only for the eager default store before its first ingest
+  /** Last wire ACTIVITY (F-058a): request ingest or reply capture — the names
+   *  keep their historical "ingest" spelling because the persisted JSON shape
+   *  is unchanged (REGISTRY_VERSION stays 3). */
   lastIngestAt: string | null;
   lastIngestSeq: number;
   suspicious: ConvWarning | null;
@@ -181,22 +192,39 @@ export class ConversationRegistry {
     return rec;
   }
 
-  /** The conversation control ops target. Explicit id wins; otherwise: most TOTAL
-   *  turn frames INCLUDING tombstones (deletion is curation, not abandonment — a user
-   *  deleting frames must never demote the conversation they are curating, or the
-   *  next default `revert` targets the wrong store), tie → largest live token
-   *  estimate (a real session's preamble dwarfs one-shot probes/title/recap queries,
-   *  which would otherwise steal `active` by recency right after the first turn),
-   *  tie → most recent ingest. Creates the eager default when none exist (pre-ingest
-   *  control reads on a fresh daemon). Every control response carries the resolved
-   *  conv id so the selection is always observable. */
+  /** F-058a (A2): a REPLY landing is wire activity too. The proxy calls this
+   *  immediately before store.captureAssistant(), so the store persist that
+   *  capture triggers writes the bumped seq into the same registry file write.
+   *  Without it, a title/probe side-call ingesting ms after the main thread's
+   *  request (wiretap-proven, F-054) would hold `active` until the user's NEXT
+   *  turn; with it, the main reply retakes `active` seconds later. Also
+   *  refreshes lastIngestAt (reviewer-required): `ctx conversations` and the
+   *  UI must not show a stale timestamp for the active winner. */
+  touch(rec: ConvRecord): void {
+    rec.lastIngestSeq = ++this.ingestSeq;
+    rec.lastIngestAt = new Date().toISOString();
+  }
+
+  /** The conversation control ops target. Explicit id wins; otherwise the most
+   *  RECENT WIRE ACTIVITY wins (F-058a, Nil 2026-06-11: "the active one is c5,
+   *  that's who i'm talking to" — reviewer-gated A2): lastIngestSeq is bumped
+   *  by route() on every request ingest and by touch() on every reply capture,
+   *  so a title/probe side-call that ingests ms after the main thread's
+   *  request only holds `active` until the main reply lands. Deletes never
+   *  bump the seq — deleting frames cannot demote the curated conversation
+   *  (the P1 invariant, by construction; pinned in conversations.test.ts).
+   *  Ties (never-touched records only, seq 0 — kept for a total order) fall
+   *  back to the previous ranking: most total turn frames incl. tombstones,
+   *  then live tokens. Creates the eager default when none exist (pre-ingest
+   *  control reads on a fresh daemon). Every control response carries the
+   *  resolved conv id so the selection is always observable. */
   activeRecord(convId?: string | null): ConvRecord | null {
     if (convId) return this.convs.find((r) => r.id === convId) ?? null;
     if (this.convs.length === 0) return this.create(null);
     const rank = (r: ConvRecord): [number, number, number] => [
+      r.lastIngestSeq,
       this.totalTurnFrames(r),
       this.tokens(r),
-      r.lastIngestSeq,
     ];
     let best = this.convs[0]!;
     let bestRank = rank(best);

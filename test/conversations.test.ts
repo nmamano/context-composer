@@ -131,13 +131,17 @@ test("side queries get their own conversation: no bleed either direction, no hea
     stub.enqueue({ text: "side reply", stopReason: "end_turn" });
     await send({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "quota" }] });
 
-    // Early-session edge: at 1 turn-frame each, the NEWER side query must not steal
-    // `active` — the token-estimate tiebreak keeps the real session (big head) active.
+    // F-058a (most recent wire activity, A2): the side query is the LAST
+    // activity here (its ingest + reply capture both followed main turn 1), so
+    // it IS active at this instant — the accepted residual the reviewer named.
+    // The main thread retakes `active` with its next request below; in the
+    // live TUI it retakes within seconds when its slower reply settles.
     const early = (await (await fetch(`${base}/control/conversations`)).json()) as any;
     const earlyActive = early.conversations.find((c: any) => c.active);
-    expect(earlyActive.tokenEstimate).toBeGreaterThan(
+    expect(earlyActive.turnFrames).toBe(1);
+    expect(earlyActive.tokenEstimate).toBeLessThan(
       Math.max(...early.conversations.filter((c: any) => !c.active).map((c: any) => c.tokenEstimate)),
-    );
+    ); // the small side call, not the big-head main session
 
     stub.enqueue({ text: "main reply 2", stopReason: "end_turn" });
     await send({
@@ -162,7 +166,8 @@ test("side queries get their own conversation: no bleed either direction, no hea
     expect(mainWire).toContain("MAIN SYSTEM PROMPT"); // head not clobbered by the side query
     expect(mainWire).not.toContain("quota");
 
-    // Control surface: two conversations; the main thread is active (more turn frames).
+    // Control surface: two conversations; the main thread is active again —
+    // its turn-2 ingest + reply capture are now the most recent activity.
     const convs = (await (await fetch(`${base}/control/conversations`)).json()) as any;
     expect(convs.conversations).toHaveLength(2);
     const active = convs.conversations.find((c: any) => c.active);
@@ -205,11 +210,18 @@ test("the registry survives a restart: conversations, active selection, composed
     await send({ ...MAIN_HEAD, messages: [{ role: "user", content: "hello main" }] });
     stub.enqueue({ text: "s1", stopReason: "end_turn" });
     await send({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "quota" }] });
+    // F-058a: the side query was the last activity before the restart…
+    const preStop = (await (await fetch(`${base}/control/conversations`)).json()) as any;
+    const preActive = preStop.conversations.find((c: any) => c.active);
+    expect(preActive.turnFrames).toBe(1); // the side call
     proxy!.stop();
 
     boot(); // restart on the same registry file
     const convs = (await (await fetch(`${base}/control/conversations`)).json()) as any;
     expect(convs.conversations).toHaveLength(2);
+    // …and the activity seq is persisted: the same conversation is active
+    // after the reload (F-058a restart durability).
+    expect(convs.conversations.find((c: any) => c.active).id).toBe(preActive.id);
     // Identity survives: resending the main thread matches the restored conversation.
     stub.enqueue({ text: "r2", stopReason: "end_turn" });
     await send({
@@ -222,6 +234,10 @@ test("the registry survives a restart: conversations, active selection, composed
     });
     const convs2 = (await (await fetch(`${base}/control/conversations`)).json()) as any;
     expect(convs2.conversations).toHaveLength(2); // no third conversation forked
+    // The resumed main thread is the most recent activity → active again.
+    const mainAgain = convs2.conversations.find((c: any) => c.active);
+    expect(mainAgain.id).not.toBe(preActive.id);
+    expect(mainAgain.turnFrames).toBe(2);
     const wire = JSON.stringify(stub.received[stub.received.length - 1]);
     expect(wire).toContain("after restart");
     expect(wire).not.toContain("quota");
@@ -233,7 +249,8 @@ test("the registry survives a restart: conversations, active selection, composed
 
 // Reviewer P1 regression: deletion is curation, not abandonment. Deleting every live
 // turn frame of the curated conversation must NOT demote it — the next DEFAULT
-// control op (the user's `ctx revert`!) still targets it.
+// control op (the user's `ctx revert`!) still targets it. Under F-058a this holds
+// BY CONSTRUCTION (deletes never bump the activity seq) — pinned here regardless.
 test("deleting all live turn frames does not demote the active conversation; default revert works", async () => {
   const stub: StubUpstream = startStubUpstream();
   let proxy: ProxyHandle | undefined;
@@ -249,7 +266,12 @@ test("deleting all live turn frames does not demote the active conversation; def
       await fetch(`${base}/control/list`);
     };
 
-    // Main: 2 turns. Side query: 1 turn (more recent).
+    // Side query first, then main: 2 turns — main is the most recent activity
+    // (F-058a), so the DEFAULT route targets it; the side conv has MORE live
+    // turn frames than main will have after the deletes below, which is
+    // exactly what makes the stays-active assertion meaningful.
+    stub.enqueue({ text: "s", stopReason: "end_turn" });
+    await send({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "quota" }] });
     stub.enqueue({ text: "r1", stopReason: "end_turn" });
     await send({ ...MAIN_HEAD, messages: [{ role: "user", content: "hello main" }] });
     stub.enqueue({ text: "r2", stopReason: "end_turn" });
@@ -261,8 +283,6 @@ test("deleting all live turn frames does not demote the active conversation; def
         { role: "user", content: "second" },
       ],
     });
-    stub.enqueue({ text: "s", stopReason: "end_turn" });
-    await send({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "quota" }] });
 
     // Delete BOTH live main turn frames via the DEFAULT (active) route.
     const mainList = (await (await fetch(`${base}/control/list`)).json()) as any;
@@ -298,6 +318,91 @@ test("deleting all live turn frames does not demote the active conversation; def
   } finally {
     proxy?.stop();
     stub.stop();
+  }
+});
+
+// F-058a (Nil 2026-06-11; reviewer-gated A2) — the F-054 race, at the registry
+// level: CC's title side-call ingests ms AFTER the main thread's request
+// (wiretap-proven, 23ms in the live evidence). Under most-recent-activity the
+// side call briefly steals `active`; the main thread's REPLY capture (touch)
+// retakes it without waiting for the user's next turn.
+test("F-058a: a later side ingest briefly steals active; the main reply capture (touch) retakes it", () => {
+  const reg = new ConversationRegistry();
+  const mainBody = { ...MAIN_HEAD, messages: [{ role: "user", content: "hello main" }] };
+  const main = reg.route(mainBody);
+  main.store.ingest(mainBody); // what the proxy does right after routing
+  expect(reg.activeRecord()!.id).toBe(main.id);
+
+  // 23ms later: the title side-call's request arrives → most recent activity.
+  const side = reg.route({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "<session>hello main</session>" }] });
+  expect(side.id).not.toBe(main.id);
+  expect(reg.activeRecord()!.id).toBe(side.id); // the accepted brief steal
+
+  // Explicit ?conv targeting is unaffected by the ranking at all times.
+  expect(reg.activeRecord(main.id)!.id).toBe(main.id);
+  expect(reg.activeRecord(side.id)!.id).toBe(side.id);
+
+  // The side call's own reply settles first — side stays active…
+  reg.touch(side);
+  expect(reg.activeRecord()!.id).toBe(side.id);
+
+  // …then the main thread's slower reply lands: touch retakes `active` (A2) —
+  // no waiting for the user's next request.
+  main.lastIngestAt = "2000-01-01T00:00:00.000Z"; // sentinel: touch must refresh it
+  reg.touch(main);
+  expect(reg.activeRecord()!.id).toBe(main.id);
+  // Reviewer-required: touch refreshes lastIngestAt too — `ctx conversations`
+  // and the UI must not show a stale timestamp for the active winner.
+  expect(main.lastIngestAt).not.toBe("2000-01-01T00:00:00.000Z");
+  expect(Number.isNaN(Date.parse(main.lastIngestAt!))).toBe(false);
+
+  // Tombstone safety at the ranking layer: ops never bump the seq, so even
+  // deleting EVERY live main frame cannot demote it.
+  const ids = main.store.list().filter((f) => f.kind === "turn").map((f) => f.id);
+  expect(ids.length).toBeGreaterThan(0); // non-vacuous: there IS something to delete
+  main.store.delete(ids);
+  expect(reg.activeRecord()!.id).toBe(main.id);
+});
+
+// F-058a (reviewer finding, batch G): `ctx conversations` is the user-facing
+// surface for understanding active/default targeting — under A2 the timestamp
+// refreshes on REPLY capture too, so labeling it "last ingest" would re-create
+// the F-058 confusion. Real subprocess against a stub control server (the
+// batch-E harness pattern).
+test("F-058a: ctx conversations labels the timestamp as activity, not ingest", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: async () =>
+      Response.json({
+        conversations: [
+          {
+            id: "c1",
+            key: "k1",
+            turnFrames: 2,
+            totalTurnFrames: 2,
+            forkFrames: 0,
+            tokenEstimate: 100,
+            lastIngestAt: "2026-06-11T10:00:00.000Z",
+            active: true,
+            suspicious: null,
+          },
+        ],
+      }),
+  });
+  try {
+    const proc = Bun.spawn(["bun", "src/cli/ctx.ts", "conversations"], {
+      env: { ...process.env, CC_CONTROL_URL: `http://localhost:${server.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const code = await proc.exited;
+    const out = await new Response(proc.stdout).text();
+    expect(code).toBe(0);
+    expect(out).toContain("last activity 2026-06-11T10:00:00.000Z");
+    expect(out).not.toContain("last ingest");
+    expect(out).toContain("active = most recent activity"); // the legend explains the mark
+  } finally {
+    server.stop(true);
   }
 });
 
