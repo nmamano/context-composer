@@ -549,7 +549,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-054 — CC side-call conversations (title generation, probes) clutter the conversation switcher
 - reported: 2026-06-11 · class: design-question
-- status: parked-for-Nil
+- status: closed — keep as-is (Nil 2026-06-11, after the mechanism was explained: "ok that makes sense, fine with me"); reopen if the clutter bothers him later
 - what: "i think i found a bug: context composer created 2 sessions... [c4] only has my first message... then it seems like it continued in a different session? [c5]"
 - where: conversation switcher; convs c4 (also c1, c2 — same species)
 - expected: NOT a bug — wiretap-verified: c4 is Claude Code's own session-TITLE generator (system prompt: "Generate a concise, sentence-case title (3-7 words)..."; 1 message wrapped in <session> tags; fired 23ms after c5's real first request; reply = {"title": ...}). A genuinely separate API conversation → own opening fingerprint → own conversation. Faithful capture; the UX is the question
@@ -587,3 +587,86 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## UX-note — restart-reset of view annotations bit twice (no F-number, recorded for context)
 - 2026-06-11: after a daemon restart, inLastView resets to null until the next request re-establishes a view (by design — views are derived per request, never persisted; pinned since Phase 2.7). Surfaced as Nil's "show fork-only frames button does not even appear now, regression?" — not a regression; the toggle renders only when fork-only frames exist. If this keeps confusing, candidate refinement: an empty-state hint in the frames view after restart ("frame roles appear after the next message"). Not building unprompted.
+
+
+## F-058 — "Active" conversation ranking contradicts intuition ("the active one is c5, that's who i'm talking to")
+- reported: 2026-06-11 · class: design-question
+- status: awaiting Nil's pick (then plan gate — engine ranking + CLI default targeting)
+- what: "what does active even mean? the active one is c5, that's who im talking to in claude now. if active is meaningless, just remove that concept i guess?"
+- where: engine registry "active" ranking (most TOTAL turn frames incl. tombstones → live tokens → recency); consumed by CLI default targeting (every store-scoped verb without --conv) and the switcher's "· active" badge
+- expected: TBD by Nil — to him active should mean "the conversation I'm talking to right now"
+- evidence: c3 (11 turns, idle) outranks c5 (his live session). The turns-first ranking exists for a reason (P1 fix: deleting frames must never demote the active conversation — live-frame counting caused exactly that), but turns-first makes long-idle conversations sticky
+- resolution: options: (a) REDEFINE active = most recent ingest (lastIngestAt), tombstone-safe by construction (deletes don't touch ingest time) — matches intuition; small race: a session's title side-call ingests ms before the real first turn, self-heals on the first reply capture; (b) REMOVE the concept — CLI would always require --conv (worse for the terminal-scalpel flow), F-057 already freed the UI from it; (c) keep as-is. My lean: (a). Engine+CLI semantics → Nil picks, then plan gate
+- decided (Nil, 2026-06-11): option (a) — redefine active = most recent ingest. Plan-gate next
+
+## F-059 — Should refresh re-establish view annotations after a daemon restart?
+- reported: 2026-06-11 · class: design-question
+- status: awaiting Nil's pick (touches a LOCKED decision — views derived per request, never persisted)
+- what: "it works, but confusing..? i feel like the refresh button should also trigger this annotation, or does that break the flow?"
+- where: inLastView after daemon restart; refresh button
+- expected: TBD by Nil
+- evidence: refresh CAN'T recompute it today: "which frames rode the last wire request" lives only in RAM — locked out of persistence to protect fork isolation (Phase 2.7/3a). The annotation genuinely returns on the next request. BUT: persisting the last view's frame-id list as DISPLAY-ONLY metadata would not touch emission (compose keeps deriving views per request) — fork isolation stays intact; it is still a locked-decision amendment
+- resolution: options: (a) keep — annotations return on the next turn (zero risk); (b) persist lastEmittedView as display-only metadata so restarts don't blank annotations (engine+store change, plan gate; compose untouched — explicitly NOT used for emission); (c) pure-UI empty-state hint after restart ("frame roles appear after the next message"). Nil picks; (b) needs a plan gate
+- decided (Nil, 2026-06-11): option (c) — empty-state hint. In batch 11
+
+
+## F-060 — Edit form should be prefilled with the frame's current content
+- reported: 2026-06-11 (Nil's "10.1") · class: refinement
+- status: triaged (batch 11)
+- what: "the edit menu should be pre-filled with the current content."
+- where: edit op form
+- evidence: pure UI (prefill.ts, the F-003 pattern). Care: --text replaces the frame's emission with ONE message — prefill must be faithful-on-unchanged-submit. Single text-bearing-message emissions prefill verbatim; multi-message emissions get no text prefill (a flattened prefill would silently restructure on submit)
+- resolution: (batch 11)
+
+## F-061 — Compact form is confusing; should work like offload (prefilled editable summary)
+- reported: 2026-06-11 (Nil's "10.2") · class: refinement
+- status: triaged (batch 11, UI side; param-surface change only if Nil asks after)
+- what: "I don't understand the compact menu. What is 'summary text'? what does 'regen (LLM)' do? (tooltip would be good.) What happens if you use both? How is 'summary text' different than just 'edit'? ... maybe: the LLM summary is generated automatically, and optionally the user can edit it. Note: the offloading op does this correctly."
+- evidence: pure-UI fix available: prefill compact's text with the same chain offload uses (frame auto-summary ?? deterministic derive) + plain tooltips (text wins over regen when both; regen = the model writes it server-side at op time)
+- resolution: (batch 11)
+
+## F-062 — Enrichment produced wrong metadata for t15 (fallback title on a real question) — enriches too early
+- reported: 2026-06-11 (Nil's "10.3") · class: bug
+- status: diagnosed — fix needs a plan gate (engine enrich policy)
+- what: "t15: a non-fork-only frame where I asked 'can yu tell me about the incident where you got the math wrong?' but the summary ... is 'Boilerplate system prompt and environment context only; no real user request was made in this turn.' Is this a bug?"
+- evidence: DIAGNOSED 2026-06-11: t15's CURRENT content rebuilds into a clean 1.6KB prompt (question first, no truncation), and a controlled sonnet@low call on that exact prompt returns perfect metadata ("Incident where math error went uncorrected"). So the live enrichment saw DIFFERENT content: enrichment fires at FIRST capture and applies first-wins (title-still-placeholder check), but frames grow/refresh afterward (tool loops; ephemeral reminder blocks replaced on resend). t15's enrich-time content was evidently volatile boilerplate
+- resolution: fix direction (plan-gate): re-enrich when an auto-enriched frame's content has materially changed (the engine already computes "grown") — e.g. once at reply-capture settle; manual retitles still win (existing race rule); quota note: bounded re-runs, not per-ingest
+- ALSO root-causes the long-standing "background context" titles on other frames (t2, t6 — suggestion frames enriched from partial content)
+
+## F-063 — Position dropdowns offer destinations that can only refuse (deleted frames; fork-only questionable)
+- reported: 2026-06-11 (Nil's "10.4") · class: refinement
+- status: triaged (batch 11)
+- what: "trying to move a frame after a deleted frame fails. that's ok, but maybe it shouldn't be an option ... i think fork-only frames should be excluded as well"
+- evidence: pure UI — the shared position dropdown lists every loaded frame. RAIL NOTE: ops are never hidden by frame state (guards speak), but this filters a DESTINATION list, not an op; same distinction as F-006 (card visibility ≠ op availability). Refusals still render verbatim for anything else invalid
+- resolution: (batch 11) filter deleted + fork-only frames from position options (add/move/combine)
+
+## F-064 — Split: confusing form; children appear at the end with placeholder titles; original remains visible
+- reported: 2026-06-11 (Nil's "10.5") · class: design-question (display + engine metadata)
+- status: parked-for-Nil — options below, needs his picks
+- what: "split menu is confusing ... needs more hand holding. also, the two frames resulting from split appear at the end of the convo, instead of where the previous frame was. and the previous frame still exists, leading to duplication. more reasonable would be to split in place, old one disappears. also, the new ones should carry over the title and summary, edited to show that it's been split (like 'part 1/2')."
+- evidence: the WIRE is already right (children emit AT the original's slot via resolution; the original emits nothing — pinned by structural-ops tests). What Nil sees is the FRAME VIEW, which lists STORE order: children are new frames (appended), the split original remains as the match target (flagged). Same presentation applies to combine parts. Children get placeholder titles because enrichment is live-ingest-only and split is an op
+- resolution: options: (1) DISPLAY — frame view hides structurally-hidden frames (absorbed parts / split originals) by default behind the existing-style toggle, and/or orders cards by emission order; (2) ENGINE metadata — split() derives children titles/summaries deterministically from the original ("<title> (part 1/2)", summary carried), no LLM; cheap, plan-gated; (3) FORM — hand-holding copy: show the frame's messages with indices so "--at" is pickable rather than guessed (bigger form work). Nil picks any/all
+- note: t18-era complaint "frame t18, no summary" = (2)
+
+## F-065 — Compact vs summarize: difference unclear
+- reported: 2026-06-11 (Nil's "10.6") · class: refinement
+- status: triaged (batch 11)
+- what: "what is the difference between compact and summarize?"
+- evidence: compact CHANGES WHAT THE MODEL SEES (replaces the frame's emission with a summary — representation override); summarize only rewrites the CARD's description (display metadata, never emitted). Pure-UI copy/tooltips
+- resolution: (batch 11) tooltips/labels state the split plainly: compact = "shrink what the model sees"; summarize = "rewrite this card's description (display only)"
+
+## F-066 — Retitle (and forms generally) should prefill current values
+- reported: 2026-06-11 (Nil's "10.7") · class: refinement
+- status: triaged (batch 11)
+- what: "retitle menu should be prefilled with current title and summary. that's as a general principle, a fully empty field is not usually the most convenient starting point."
+- evidence: pure UI (prefill.ts); recorded as a STANDING PRINCIPLE for future forms
+- resolution: (batch 11) retitle prefills title + summary from the frame
+
+
+## F-067 — Summarize/retitle shouldn't look like frame operations — make title/summary editable in the details panel
+- reported: 2026-06-11 · class: design-question (UI surface reshape; Nil leaning yes)
+- status: awaiting Nil's confirm, then implement (likely replaces the F-065/F-066 copy/prefill work — do NOT do both)
+- what: "summarize and retitle shouldn't *look* like frame operations if they just modify metadata. We could just make the title and summary fields editable in the frame side panel"
+- where: details panel + per-frame ops menu
+- evidence: parity rail is SAFE: inline editing dispatches the SAME registry verbs (retitle/summarize) to the SAME routes — a different entry point, not a new op (the F-013 feasibility argument). Open sub-questions: (a) do retitle/summarize leave the ops menu once inline editing exists, or stay in both? (b) where do the regen-(LLM) variants live — small "regenerate" buttons beside the fields? (c) commits still record per change (each inline save = one retitle/summarize commit)
+- resolution: on Nil's confirm: details panel title + summary become editable-in-place (save dispatches the registry verb; refusals verbatim as always); regen buttons beside fields; ops menu entries dropped per his (a) answer. INTERACTION: F-065's tooltip copy and F-066's retitle prefill are superseded by this if confirmed — sequence the decision BEFORE batch 11's copy work on those two items
