@@ -95,6 +95,12 @@ export type RepInput = { text: string } | { raw: WireMessage[] };
  *  the engine's single authorized content heuristic — do not generalize). */
 const SUGGESTION_MARKER = "[SUGGESTION MODE";
 
+/** F-062 (plan-gated, reviewer: "CAP=2 is the right pragmatic bound"): total
+ *  auto-enrichment APPLIES per frame — one initial fill + one re-enrich after
+ *  material content growth. Bounds the sonnet@low burn even though resend
+ *  churn (ephemeral reminder blocks) can keep changing the content signature. */
+const ENRICH_RUNS_CAP = 2;
+
 /** F-053 (Phase 5e, Nil-authorized 2026-06-10; reviewer-gated): brittle
  *  exception #2 to the locked "no content heuristics" principle. Claude Code
  *  embeds an `x-anthropic-billing-header: ...; cch=...;` line in the system
@@ -948,13 +954,60 @@ export class FrameStore {
     return { ok: true, commit };
   }
 
+  /** F-062: a field is APPLICABLE when auto-enrichment may write it — still
+   *  the fill state (title = makeFrame placeholder / summary = null), or
+   *  still AUTO-OWNED (its current value equals the last auto-applied value
+   *  recorded in f.enrichment; null per field = never auto-applied). A manual
+   *  retitle/summarize changes the value → mismatch → auto never overwrites
+   *  it again, per field, forever. Old-store frames lack f.enrichment and are
+   *  therefore fill-only (the recorded residual: they cannot be safely told
+   *  apart from manually titled frames; no backfill without Nil's say-so). */
+  private enrichApplicable(f: Frame): { title: boolean; summary: boolean } {
+    return {
+      title:
+        f.title === `frame ${f.id}` ||
+        (f.enrichment?.title != null && f.title === f.enrichment.title),
+      summary:
+        f.summary == null ||
+        (f.enrichment?.summary != null && f.summary === f.enrichment.summary),
+    };
+  }
+
+  /** Engine batch H (F-062, plan-gated): the ONE eligibility authority the
+   *  server's enrichment queue consults before burning an LLM call. Eligible =
+   *  CONTENT eligibility (a fill-state field exists, OR the frame was
+   *  auto-enriched, its content signature materially changed since the last
+   *  apply, and the re-run cap is not exhausted) AND at least one field is
+   *  applicable (reviewer adjustment #1: sig-change alone must not trigger a
+   *  call when both fields went manual — it would apply nothing). Signature
+   *  comparison stays engine-private (adjustment #2). */
+  enrichEligible(id: string): boolean {
+    const f = this.show(id);
+    if (!f || f.kind !== "turn" || f.deleted) return false;
+    const a = this.enrichApplicable(f);
+    if (!a.title && !a.summary) return false;
+    const fill =
+      (a.title && f.title === `frame ${f.id}`) || (a.summary && f.summary == null);
+    if (fill) return true;
+    if (!f.enrichment) return false; // applicable but no fill ⇒ needs the auto record
+    return (
+      f.enrichment.runs < ENRICH_RUNS_CAP &&
+      this.contentSig(f) !== f.enrichment.sig
+    );
+  }
+
   /** Engine batch A (plans/ui-feedback.md F-001, plan-gated): METADATA FILL
-   *  from async ingest enrichment. The server layer generates {title, summary}
-   *  and applies it here under LATEST-state checks (reviewer condition #5):
-   *  the frame must still exist, still be a turn frame, not deleted; title
-   *  fills only while it is still the makeFrame placeholder; summary only
-   *  while still null — so a manual retitle ALWAYS wins, per field. Fields
-   *  that no longer qualify are skipped; if nothing applies, NO event.
+   *  from async ingest enrichment; batch H (F-062, plan-gated) extends it to
+   *  RE-ENRICH. The server layer generates {title, summary} and applies it
+   *  here under LATEST-state checks (reviewer condition #5): the frame must
+   *  still exist, still be a turn frame, not deleted; each field applies only
+   *  while it is still fill-state OR still auto-owned (enrichApplicable) — so
+   *  a manual retitle ALWAYS wins, per field, value-anchored. Fields that no
+   *  longer qualify are skipped; if nothing applies, NO event and no
+   *  ownership/sig/runs update. On apply, f.enrichment records the new
+   *  auto-owned values (unapplied fields keep their prior record — a manual
+   *  field stays correctly non-owned), the CURRENT content signature, and the
+   *  incremented total-applies count (the queue's eligibility cap reads it).
    *  Deliberately NOT a commit (no per-turn history flooding — this mirrors
    *  the placeholder stamped at capture); audited via an `enriched` timeline
    *  event carrying the filled fields + provider label (condition #1 — never
@@ -969,16 +1022,25 @@ export class FrameStore {
       return { ok: false, error: `frame ${id} is not a turn frame` };
     }
     if (f.deleted) return { ok: false, error: `frame ${id} is deleted` };
+    const a = this.enrichApplicable(f);
     const applied: Array<"title" | "summary"> = [];
-    if (opts.title !== undefined && f.title === `frame ${f.id}`) {
+    if (opts.title !== undefined && a.title) {
       f.title = opts.title;
       applied.push("title");
     }
-    if (opts.summary !== undefined && (f.summary === undefined || f.summary === null)) {
+    if (opts.summary !== undefined && a.summary) {
       f.summary = opts.summary;
       applied.push("summary");
     }
     if (applied.length === 0) return { ok: true, applied };
+    f.enrichment = {
+      title: applied.includes("title") ? f.title : (f.enrichment?.title ?? null),
+      summary: applied.includes("summary")
+        ? (f.summary ?? null)
+        : (f.enrichment?.summary ?? null),
+      sig: this.contentSig(f),
+      runs: (f.enrichment?.runs ?? 0) + 1,
+    };
     f.modifiedAt = ++this.seq;
     this.recordEvent(
       "enriched",

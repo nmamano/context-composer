@@ -591,7 +591,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-058 — "Active" conversation ranking contradicts intuition ("the active one is c5, that's who i'm talking to")
 - reported: 2026-06-11 · class: design-question
-- status: fixed@batch-G
+- status: fixed@d54819c (batch G; reviewer-signed 2026-06-11 after one P3 — CLI "last ingest" label — fixed pre-commit; plan-gate GO A2; conversations focused 12/12; demo/live-e2e/live-phase2 PASS)
 - what: "what does active even mean? the active one is c5, that's who im talking to in claude now. if active is meaningless, just remove that concept i guess?"
 - where: engine registry "active" ranking (most TOTAL turn frames incl. tombstones → live tokens → recency); consumed by CLI default targeting (every store-scoped verb without --conv) and the switcher's "· active" badge
 - expected: TBD by Nil — to him active should mean "the conversation I'm talking to right now"
@@ -633,11 +633,14 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-062 — Enrichment produced wrong metadata for t15 (fallback title on a real question) — enriches too early
 - reported: 2026-06-11 (Nil's "10.3") · class: bug
-- status: diagnosed — fix needs a plan gate (engine enrich policy)
+- status: fixed@batch-H
 - what: "t15: a non-fork-only frame where I asked 'can yu tell me about the incident where you got the math wrong?' but the summary ... is 'Boilerplate system prompt and environment context only; no real user request was made in this turn.' Is this a bug?"
 - evidence: DIAGNOSED 2026-06-11: t15's CURRENT content rebuilds into a clean 1.6KB prompt (question first, no truncation), and a controlled sonnet@low call on that exact prompt returns perfect metadata ("Incident where math error went uncorrected"). So the live enrichment saw DIFFERENT content: enrichment fires at FIRST capture and applies first-wins (title-still-placeholder check), but frames grow/refresh afterward (tool loops; ephemeral reminder blocks replaced on resend). t15's enrich-time content was evidently volatile boilerplate
-- resolution: fix direction (plan-gate): re-enrich when an auto-enriched frame's content has materially changed (the engine already computes "grown") — e.g. once at reply-capture settle; manual retitles still win (existing race rule); quota note: bounded re-runs, not per-ingest
 - ALSO root-causes the long-standing "background context" titles on other frames (t2, t6 — suggestion frames enriched from partial content)
+- plan-gate GO (Context Reviewer, 2026-06-11) with adjustments, all adopted: (1) enrichEligible requires content eligibility AND ≥1 applicable field — sig-change alone never burns a call when both fields went manual; (2) signature logic stays engine-private (queue never sees sigs); (3) old-store residual recorded below; (4) store.ts version comment notes the additive optional fields. CAP=2 approved; single-object shape preferred; enrichEligible covers the fill pre-check (one authority).
+- implementation (batch H): Frame gains optional enrichment {title: string|null, summary: string|null, sig, runs} — per-field AUTO-OWNERSHIP, value-anchored (null = field never auto-applied; nullable fields are a faithful refinement of the gated shape for the only-one-field-applied-first case). store.enrichApplicable: a field is writable while fill-state OR current value === recorded auto value — manual ops win per field forever. store.enrichEligible (queue's single authority): fill case, OR enrichment present + runs < ENRICH_RUNS_CAP(2) + contentSig changed (the F-053 grown machinery, engine-private). store.enrich applies under the same per-field rules and re-anchors enrichment {applied values; unapplied fields keep prior record; current sig; runs+1}. Queue pre-check replaced by enrichEligible. SNAPSHOT_VERSION stays 6 (additive optional; store.ts comment updated). Each apply audits via the existing `enriched` event — re-enrichment never silent.
+- RESIDUAL (recorded per reviewer adjustment #3): frames auto-enriched BEFORE this field existed (Nil's current t2/t6/t15) lack the ownership record and cannot be safely distinguished from manually titled frames → fill-only, no auto-heal. F-062 fixes policy going forward; a migration/backfill/audit-derived ownership inference would need Nil's authorization + its own gate. Workaround for the existing bad titles: manual retitle or regen.
+- regressions (enrich.test.ts 29/29, +6): growth→eligible→re-enrich overwrites auto fields→CAP stops (sig-unchanged skip leg inline); reviewer's partial-ownership case (manual title survives, only summary applies, ownership re-anchors); reviewer's both-manual no-call case (sig changed + runs<CAP but nothing applicable → not eligible); old-store residual (auto-looking frame without record is fill-only); snapshot restart (record + eligibility survive; growth after restore re-eligibles); queue call-counting (fill=1 call, churn-no-growth=0, growth=1 more, post-CAP growth=0)
 
 ## F-063 — Position dropdowns offer destinations that can only refuse (deleted frames; fork-only questionable)
 - reported: 2026-06-11 (Nil's "10.4") · class: refinement

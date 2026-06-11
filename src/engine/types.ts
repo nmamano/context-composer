@@ -35,6 +35,22 @@ export interface Frame {
   /** §11 Phase 3d — display summary (§7), user-set or LLM-regenerated via
    *  `retitle`. Pure metadata: never emitted, never part of any hash. */
   summary?: string | null;
+  /** F-062 (Phase 5e, plan-gated) — auto-enrichment ownership record. The last
+   *  AUTO-applied title/summary values (null per field = that field was never
+   *  auto-applied), the frame's content signature at apply time, and the total
+   *  applies count (re-enrich is capped). A field is "auto-owned" while its
+   *  current value still equals the recorded auto value — a manual
+   *  retitle/summarize changes the value and auto NEVER overwrites it again.
+   *  Additive optional (SNAPSHOT_VERSION unchanged): frames from older stores
+   *  lack it and behave fill-only — they cannot be safely distinguished from
+   *  manually titled frames, so F-062 fixes policy going FORWARD only (the
+   *  recorded old-store residual). Pure metadata: never emitted, never hashed. */
+  enrichment?: {
+    title: string | null;
+    summary: string | null;
+    sig: string;
+    runs: number;
+  } | null;
 
   // Identity anchor (turn frames). See reconcile.ts.
   anchorFp: string;

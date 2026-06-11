@@ -31,6 +31,10 @@ import type { Frame, RequestEnvelope } from "./types.ts";
 // `splitInto`.
 // v6 (§11 Phase 3d): Frame gains `summary` display metadata. No migrations —
 // older stores fail loudly per policy.
+// v6 ALSO carries (additive optional, no version bump per the F-052 precedent):
+// ContextEvent.direction (F-052) and Frame.enrichment (F-062, the auto-metadata
+// ownership record) — older v6 files simply lack them and degrade gracefully
+// (legacy event rendering; fill-only enrichment).
 export const SNAPSHOT_VERSION = 6;
 
 /** The whole durable state. Internal seq fields (createdAt/modifiedAt/seq) live here —

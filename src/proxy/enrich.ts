@@ -1,10 +1,14 @@
 // Ingest enrichment (engine batch A — plans/ui-feedback.md F-001/F-017,
 // plan-gated 2026-06-10). After a turn's assistant capture lands, ONE LLM call
 // generates {title, summary} for that frame; the store applies it as metadata
-// fill (FrameStore.enrich) under latest-state checks. SERVER LAYER ONLY: the
-// store stays deterministic, stub tests inject a fake client, and nothing here
-// runs unless envEnrichClient() is configured (explicit CC_ENRICH_ON_INGEST=1
-// gate + provider — reviewer condition #2).
+// fill (FrameStore.enrich) under latest-state checks. Engine batch H (F-062,
+// plan-gated 2026-06-11): not strictly first-wins anymore — when an
+// AUTO-enriched frame's content materially changed since the last apply, one
+// bounded re-enrich runs at a later reply-capture settle (eligibility is the
+// ENGINE's: store.enrichEligible; manual values always win, per field).
+// SERVER LAYER ONLY: the store stays deterministic, stub tests inject a fake
+// client, and nothing here runs unless envEnrichClient() is configured
+// (explicit CC_ENRICH_ON_INGEST=1 gate + provider — reviewer condition #2).
 //
 // LLM output is UNTRUSTED metadata (reviewer condition #4): strict JSON parse,
 // whitespace collapse, hard length caps, no-op on malformed/empty values. This
@@ -118,13 +122,13 @@ export class EnrichmentQueue {
   /** Fire-and-forget from the capture path; returns the chain for tests. */
   enqueue(store: FrameStore, conv: string, frameId: string): Promise<void> {
     const run = async (): Promise<void> => {
-      const f = store.show(frameId);
-      if (!f || f.kind !== "turn" || f.deleted) return;
-      // Cheap pre-check (skip the LLM call when there is nothing to fill);
-      // the AUTHORITATIVE per-field check is store.enrich at apply time.
-      const titleOpen = f.title === `frame ${f.id}`;
-      const summaryOpen = f.summary === undefined || f.summary === null;
-      if (!titleOpen && !summaryOpen) return;
+      // ONE eligibility authority (F-062, reviewer adjustment #2): the ENGINE
+      // decides — fill case (batch A) or re-enrich case (auto-owned field +
+      // content signature materially changed + run cap, all engine-private).
+      // The AUTHORITATIVE per-field check remains store.enrich at apply time:
+      // a manual op landing during the LLM call still wins.
+      if (!store.enrichEligible(frameId)) return;
+      const f = store.show(frameId)!; // eligible ⇒ exists (same tick)
       let out: string;
       try {
         out = await this.llm.complete(enrichPrompt(f.representation ?? f.messages), 256);

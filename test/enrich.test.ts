@@ -148,6 +148,121 @@ test("deleted / missing / non-turn frames refuse", () => {
   if (preamble) expect(s.enrich(preamble.id, { title: "x" }).ok).toBe(false);
 });
 
+// ── F-062 (engine batch H, plan-gated): re-enrich on material growth ─────────
+// Eligibility is the ENGINE's single authority (enrichEligible): fill case, OR
+// auto-owned field + content signature changed + runs < CAP(2). Manual values
+// win per field, value-anchored via f.enrichment. Old-store frames (no
+// enrichment record) stay fill-only — the recorded residual.
+
+test("F-062: auto-owned + grown content → eligible; re-enrich overwrites BOTH auto fields; CAP=2 then stops", () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1] }); // partial turn (the t15 shape)
+  expect(s.enrichEligible("t1")).toBe(true); // fill case
+  s.enrich("t1", { title: "early title", summary: "early summary", source: "stub" });
+  expect(s.show("t1")!.enrichment).toMatchObject({
+    title: "early title",
+    summary: "early summary",
+    runs: 1,
+  });
+  // No growth → nothing to redo (sig unchanged, no fill field left).
+  expect(s.enrichEligible("t1")).toBe(false);
+  // The agent's resend grows the frame's content (reconcile refresh).
+  s.ingest({ ...HEAD, messages: [u1, a1] });
+  expect(s.enrichEligible("t1")).toBe(true); // auto-owned + sig changed + runs 1 < 2
+  const r = s.enrich("t1", { title: "better title", summary: "better summary", source: "stub" });
+  expect(r).toEqual({ ok: true, applied: ["title", "summary"] });
+  expect(s.show("t1")!.title).toBe("better title");
+  expect(s.show("t1")!.enrichment!.runs).toBe(2);
+  // Audited twice — re-enrichment is never silent.
+  expect(s.timeline().filter((e) => e.type === "enriched")).toHaveLength(2);
+  // Further growth: CAP exhausted → not eligible.
+  s.ingest({
+    ...HEAD,
+    messages: [u1, { role: "assistant", content: "use the staged rotation runbook, fully" }],
+  });
+  expect(s.enrichEligible("t1")).toBe(false);
+});
+
+test("F-062 (reviewer): partial ownership — manual title, auto summary → call allowed, ONLY summary applies", () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1] });
+  s.enrich("t1", { title: "auto t", summary: "auto s", source: "stub" });
+  s.retitle("t1", { title: "MY title" }); // title goes manual; summary stays auto-owned
+  s.ingest({ ...HEAD, messages: [u1, a1] }); // material growth
+  expect(s.enrichEligible("t1")).toBe(true); // summary is still auto-owned
+  const r = s.enrich("t1", { title: "auto t2", summary: "auto s2", source: "stub" });
+  expect(r).toEqual({ ok: true, applied: ["summary"] });
+  expect(s.show("t1")!.title).toBe("MY title"); // manual NEVER overwritten
+  expect(s.show("t1")!.summary).toBe("auto s2");
+  // Ownership record: summary re-anchored to the new auto value; title keeps
+  // the stale auto value (≠ manual → correctly not owned).
+  expect(s.show("t1")!.enrichment).toMatchObject({ title: "auto t", summary: "auto s2" });
+});
+
+test("F-062 (reviewer): BOTH fields manual → NOT eligible even with sig changed + runs < CAP (no wasted call)", () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1] });
+  s.enrich("t1", { title: "auto t", summary: "auto s", source: "stub" }); // runs 1
+  s.retitle("t1", { title: "MY title", summary: "MY summary" }); // both manual
+  s.ingest({ ...HEAD, messages: [u1, a1] }); // sig changed; runs 1 < 2
+  expect(s.enrichEligible("t1")).toBe(false); // nothing applicable → no LLM burn
+});
+
+test("F-062: old-store residual — an auto-looking frame WITHOUT an enrichment record is fill-only", () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1] });
+  // Simulate a frame enriched BEFORE the ownership field existed (batch A era):
+  // values set, no f.enrichment. Indistinguishable from manual → must not re-enrich.
+  const f = s.show("t1")!;
+  f.title = "old auto title";
+  f.summary = "old auto summary";
+  s.ingest({ ...HEAD, messages: [u1, a1] }); // growth
+  expect(s.enrichEligible("t1")).toBe(false);
+  expect(s.enrich("t1", { title: "x", summary: "y" })).toEqual({ ok: true, applied: [] });
+});
+
+test("F-062: enrichment record + eligibility survive a snapshot restart", () => {
+  let snap: import("../src/engine/store.ts").StoreSnapshot | null = null;
+  const adapter = { load: () => snap, save: (x: NonNullable<typeof snap>) => void (snap = x) };
+  const s = new FrameStore(adapter, "test", framesDir);
+  s.ingest({ ...HEAD, messages: [u1] });
+  s.enrich("t1", { title: "auto t", summary: "auto s", source: "stub" });
+
+  const s2 = new FrameStore(adapter, "test", framesDir); // restart
+  expect(s2.show("t1")!.enrichment).toMatchObject({ title: "auto t", summary: "auto s", runs: 1 });
+  expect(s2.enrichEligible("t1")).toBe(false); // sig persisted — no growth, no burn
+  s2.ingest({ ...HEAD, messages: [u1, a1] }); // growth after the restart
+  expect(s2.enrichEligible("t1")).toBe(true); // re-enrich case computes post-restore
+});
+
+test("F-062 queue: growth triggers exactly ONE bounded extra call; churn without growth burns nothing", async () => {
+  const s = mkStore();
+  s.ingest({ ...HEAD, messages: [u1] });
+  let calls = 0;
+  const q = new EnrichmentQueue(
+    stubLlm(async () => {
+      calls++;
+      return GOOD;
+    }),
+    "stub",
+    () => {},
+  );
+  await q.enqueue(s, "c1", "t1"); // fill
+  expect(calls).toBe(1);
+  await q.enqueue(s, "c1", "t1"); // no growth → engine says no
+  expect(calls).toBe(1);
+  s.ingest({ ...HEAD, messages: [u1, a1] }); // material growth
+  await q.enqueue(s, "c1", "t1"); // re-enrich (run 2)
+  expect(calls).toBe(2);
+  expect(s.timeline().filter((e) => e.type === "enriched")).toHaveLength(2);
+  s.ingest({
+    ...HEAD,
+    messages: [u1, { role: "assistant", content: "use the staged rotation runbook, fully" }],
+  });
+  await q.enqueue(s, "c1", "t1"); // grown again, but CAP=2 exhausted
+  expect(calls).toBe(2);
+});
+
 // ── F-017: offload default chain prefers the frame's own summary ─────────────
 
 test("offload stub: opts.summary ?? f.summary ?? deriveSummary ?? fallback", () => {
