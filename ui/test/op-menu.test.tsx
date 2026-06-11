@@ -479,3 +479,50 @@ test("every registry op with params declares only renderable kinds", () => {
     }
   }
 });
+
+// F-047: the combine panel's position dropdown — same value semantics as the
+// add form ("" omits → engine default: first pick's slot; "start" → null;
+// frame id → after that frame). Default body stays {ids} (pinned above).
+test("F-047: combine position dropdown — default omits after; start maps to null; id maps through", async () => {
+  const { container, act } = await renderApp();
+  await openFrameView(container, act);
+  await act(async () => click(container.querySelector(".store-ops .op-combine")!));
+  const panel = container.querySelector(".combine-panel")!;
+  const pos = panel.querySelector(".combine-position select") as HTMLSelectElement;
+  expect(pos).not.toBeNull();
+  const labels = Array.from(pos.options).map((o) => o.textContent);
+  expect(labels[0]).toBe("at the first picked frame's place"); // engine default, named
+  expect(labels[1]).toBe("at the start");
+  expect(labels.some((l) => l!.startsWith("after f1"))).toBe(true);
+
+  const check = (id: string) =>
+    container.querySelector(`.frame-card[data-frame-id="${id}"] .combine-check`)!;
+  await act(async () => click(check("f1")));
+  await act(async () => click(check("f2")));
+  await act(async () => setSelectValue(pos, "start"));
+  await act(async () => click(panel.querySelector(".op-combine-run")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.body).toEqual({ ids: ["f1", "f2"], after: null });
+
+  // A frame-id position maps through as after:<id> (fresh panel: state reset).
+  await act(async () => click(container.querySelector(".store-ops .op-combine")!));
+  const panel2 = container.querySelector(".combine-panel")!;
+  const pos2 = panel2.querySelector(".combine-position select") as HTMLSelectElement;
+  expect(pos2.value).toBe(""); // F-047: position resets with the mode
+  await act(async () => click(check("f1")));
+  await act(async () => click(check("f2")));
+  await act(async () => setSelectValue(pos2, "f2"));
+  await act(async () => click(panel2.querySelector(".op-combine-run")!));
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+  expect(posts).toHaveLength(2);
+  expect(posts[1]!.body).toEqual({ ids: ["f1", "f2"], after: "f2" });
+});

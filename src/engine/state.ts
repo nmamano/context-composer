@@ -708,7 +708,7 @@ export class FrameStore {
    *  (representation ?? messages), concatenated. Parts' sources may keep
    *  refreshing from resends; compose ignores their content while absorbed
    *  (reviewer RC4, option a). */
-  combine(ids: string[]): OpResult {
+  combine(ids: string[], opts: { after?: string | null } = {}): OpResult {
     if (ids.length < 2 || new Set(ids).size !== ids.length) {
       return { ok: false, error: "combine needs at least 2 distinct frame ids" };
     }
@@ -720,14 +720,35 @@ export class FrameStore {
       if (refusal) return refusal;
       parts.push(t.frame);
     }
+    // F-047: optional EXPLICIT placement — validated like add() (id must
+    // exist; null = start; absorbed parts are valid anchors — they keep their
+    // order spine slot). Omitted: today's behavior byte-for-byte (no
+    // placement; the combined frame emits at the first part's slot via
+    // resolution).
+    let placement: { after: string | null } | null = null;
+    if (opts.after !== undefined) {
+      if (opts.after === null) {
+        placement = { after: null };
+      } else {
+        if (!this.frames.some((f) => f.id === opts.after)) {
+          return { ok: false, error: `--after target ${opts.after} does not exist` };
+        }
+        placement = { after: opts.after };
+      }
+    }
     const messages = structuredClone(
       parts.flatMap((p) => p.representation ?? p.messages),
     );
     const combined = this.makeManufactured("combined", messages);
+    if (placement) combined.placement = placement;
     const commit = this.makeCommit(
       "combine",
       [...ids, combined.id],
-      { partIds: [...ids], combinedId: combined.id },
+      {
+        partIds: [...ids],
+        combinedId: combined.id,
+        ...(placement ? { placement: structuredClone(placement) } : {}),
+      },
       `combine ${ids.join("+")} -> ${combined.id}`,
     );
     combined.provenance.push(commit.id);
@@ -1249,7 +1270,14 @@ export class FrameStore {
       // STATE-based pristine check (not history-based): downstream commits that
       // have themselves been reverted leave the frame coherent again, and the
       // combine may then be reverted. Live downstream state blocks it.
-      if (combined.representation || combined.offloaded || combined.placement) {
+      // F-047: the combine commit may ITSELF have set a placement — that is
+      // this commit's own state, not downstream; only a placement that
+      // DIFFERS from the recorded one (a later move) blocks.
+      const ownPlacement =
+        (target.params as { placement?: { after: string | null } }).placement ?? null;
+      const placementChanged =
+        JSON.stringify(combined.placement ?? null) !== JSON.stringify(ownPlacement);
+      if (combined.representation || combined.offloaded || placementChanged) {
         return {
           ok: false,
           error: `combined frame ${combinedId} has downstream state (edit/offload/move) — revert those first`,

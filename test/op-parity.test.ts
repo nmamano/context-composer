@@ -144,3 +144,74 @@ describe("registry wire-honesty", () => {
     }
   });
 });
+
+// ── F-047 CLI parser edges (reviewer finding, batch E): a MUTATING verb must ──
+// refuse malformed flag usage — `ctx combine f1 f2 --after` (no value) must
+// NOT silently run the default combine. Driven as a real subprocess against a
+// recording stub so the refusal is proven to happen BEFORE any POST.
+
+describe("ctx combine --after parser edges (mutating path refuses bad usage)", () => {
+  interface Recorded { path: string; body: unknown }
+
+  async function runCombine(args: string[]): Promise<{ code: number; stderr: string; posts: Recorded[] }> {
+    const posts: Recorded[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        posts.push({ path: new URL(req.url).pathname, body: await req.json() });
+        return Response.json({
+          conv: "c1",
+          commit: { id: "c1", affectedFrameIds: [], params: { combinedId: "tX" } },
+        });
+      },
+    });
+    try {
+      const proc = Bun.spawn(
+        ["bun", "src/cli/ctx.ts", "combine", ...args],
+        {
+          env: { ...process.env, CC_CONTROL_URL: `http://localhost:${server.port}` },
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      const code = await proc.exited;
+      const stderr = await new Response(proc.stderr).text();
+      return { code, stderr, posts };
+    } finally {
+      server.stop(true);
+    }
+  }
+
+  test("--after with NO value refuses before any POST", async () => {
+    const r = await runCombine(["f1", "f2", "--after"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--after needs a frame id");
+    expect(r.posts).toHaveLength(0); // nothing mutated
+  });
+
+  test("--after followed by another flag refuses before any POST", async () => {
+    const r = await runCombine(["f1", "f2", "--after", "--start"]);
+    expect(r.code).toBe(1);
+    expect(r.posts).toHaveLength(0);
+  });
+
+  test("--after <id> and --start together refuse before any POST", async () => {
+    const r = await runCombine(["f1", "f2", "--after", "t3", "--start"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("mutually exclusive");
+    expect(r.posts).toHaveLength(0);
+  });
+
+  test("happy paths still post the right bodies", async () => {
+    const a = await runCombine(["f1", "f2", "--after", "t3"]);
+    expect(a.code).toBe(0);
+    expect(a.posts).toEqual([
+      { path: "/control/combine", body: { ids: ["f1", "f2"], after: "t3" } },
+    ]);
+    const b = await runCombine(["f1", "f2", "--start"]);
+    expect(b.code).toBe(0);
+    expect(b.posts).toEqual([
+      { path: "/control/combine", body: { ids: ["f1", "f2"], after: null } },
+    ]);
+  });
+});

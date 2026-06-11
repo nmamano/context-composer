@@ -144,8 +144,13 @@ export const OP_REGISTRY: OpSpec[] = [
     verb: "combine",
     route: "/control/combine",
     arity: "multi",
-    params: [],
-    build: (targets) => ({ ids: targets }),
+    // F-047: optional insert position, same kind as add's (the combine PANEL
+    // renders its own dropdown — default label there is "at the first picked
+    // frame's place", the engine default when the key is omitted).
+    params: [
+      { key: "after", label: "insert position", kind: "position" },
+    ],
+    build: (targets, v) => ({ ids: targets, ...position(v.after) }),
   },
   {
     verb: "split",

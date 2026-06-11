@@ -238,9 +238,31 @@ async function cmdMove(args: string[]): Promise<void> {
 }
 
 async function cmdCombine(args: string[]): Promise<void> {
-  const ids = args.filter((a) => !a.startsWith("-"));
-  if (ids.length < 2) fail("usage: ctx combine <id> <id> [...]");
-  const result = (await post("/control/combine", { ids })) as {
+  // F-047: optional insert position, same flags as add. MUTATING path: any
+  // malformed flag usage must REFUSE — never silently fall back to the
+  // default combine (reviewer finding, batch E). Flag VALUES must not be
+  // mistaken for part ids.
+  const afterIdx = args.indexOf("--after");
+  const hasStart = args.includes("--start");
+  let afterVal: string | undefined;
+  if (afterIdx >= 0) {
+    const v = args[afterIdx + 1];
+    if (v === undefined || v.startsWith("-")) {
+      fail("--after needs a frame id (or use --start for the beginning)");
+    }
+    if (hasStart) fail("--after and --start are mutually exclusive — pick one");
+    afterVal = v;
+  }
+  const ids = args.filter(
+    (a, i) => !a.startsWith("-") && (afterIdx < 0 || i !== afterIdx + 1),
+  );
+  if (ids.length < 2) {
+    fail("usage: ctx combine <id> <id> [...] [--after <id> | --start]");
+  }
+  const body: Record<string, unknown> = { ids };
+  if (afterVal !== undefined) body.after = afterVal;
+  else if (hasStart) body.after = null;
+  const result = (await post("/control/combine", body)) as {
     conv?: string;
     commit?: { id: string; params: { combinedId?: string } };
     error?: string;

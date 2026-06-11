@@ -399,3 +399,98 @@ test("through the proxy: emittedFrameIds + structureWarnings ride control compos
     stub.stop();
   }
 });
+
+// ── F-047: combine with an EXPLICIT insert position ───────────────────────────
+// Reviewer-gated: omitted `after` preserves the first-part-slot behavior
+// byte-for-byte (pinned above); given, the combined frame emits ONCE at the
+// placement (the part slots emit nothing — resolution skips a placed
+// absorber); `after` validates like add(), null = start, absorbed parts are
+// valid anchors. Placement is an ordering override, not membership creation.
+
+test("F-047: combine --after places the result; parts' slots emit nothing; exactly once", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("alpha"), a("ra"), u("beta"), a("rb"), u("gamma"), a("rc")] });
+
+  const cb = s.combine(["t1", "t2"], { after: "t3" });
+  expect(cb.ok).toBe(true);
+  const combinedId = (cb as unknown as { commit: { params: { combinedId: string } } })
+    .commit.params.combinedId;
+
+  // Emitted once, AFTER gamma — not at t1's slot.
+  const c = s.compose();
+  expect(c.emittedFrameIds).toEqual(["t3", combinedId]);
+  const w = JSON.stringify(c.body);
+  expect(w.split('"alpha"').length - 1).toBe(1); // once
+  expect(w.indexOf("gamma")).toBeLessThan(w.indexOf("alpha"));
+  // The commit records the placement (history shows where it went).
+  expect(
+    (cb as unknown as { commit: { params: { placement?: { after: string | null } } } })
+      .commit.params.placement,
+  ).toEqual({ after: "t3" });
+
+  // View-mode parity: an unaware resend of the parts emits the same shape.
+  const v = s.ingest({
+    ...HEAD,
+    messages: [u("alpha"), a("ra"), u("beta"), a("rb"), u("gamma"), a("rc")],
+  });
+  const c2 = s.compose(v);
+  expect(c2.emittedFrameIds).toEqual(["t3", combinedId]);
+});
+
+test("F-047: combine --start; and an absorbed part is a valid anchor", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("alpha"), a("ra"), u("beta"), a("rb"), u("gamma"), a("rc")] });
+
+  // --start: combined leads the emission.
+  const cb = s.combine(["t2", "t3"], { after: null });
+  expect(cb.ok).toBe(true);
+  const id1 = (cb as unknown as { commit: { params: { combinedId: string } } }).commit
+    .params.combinedId;
+  const c = s.compose();
+  expect(c.emittedFrameIds).toEqual([id1, "t1"]);
+  const w = JSON.stringify(c.body);
+  expect(w.indexOf("beta")).toBeLessThan(w.indexOf("alpha"));
+
+  // Anchor on an absorbed part: t2 keeps its order-spine slot; a second
+  // combine anchored after t2 lands where t2 sits (start, via id1's lead).
+  const s2 = mk();
+  s2.ingest({ ...HEAD, messages: [u("one"), a("r1"), u("two"), a("r2"), u("three"), a("r3")] });
+  const first = s2.combine(["t1", "t2"]); // default: first-part slot
+  expect(first.ok).toBe(true);
+  const cb2 = s2.combine(["t3"], { after: "t1" });
+  expect(cb2.ok).toBe(false); // needs >= 2 ids — guard intact
+});
+
+test("F-047: bad anchor refuses (no commit); default stays byte-identical", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("alpha"), a("ra"), u("beta"), a("rb")] });
+  const before = s.history().length;
+
+  const bad = s.combine(["t1", "t2"], { after: "t999" });
+  expect(bad.ok).toBe(false);
+  expect((bad as { ok: false; error: string }).error).toContain("t999");
+  expect(s.history()).toHaveLength(before); // refusal leaves no commit
+
+  // Omitted after: identical to the pre-F-047 path — no placement recorded.
+  const ok = s.combine(["t1", "t2"]);
+  expect(ok.ok).toBe(true);
+  const params = (ok as unknown as { commit: { params: Record<string, unknown> } }).commit
+    .params;
+  expect("placement" in params).toBe(false);
+  const combinedId = params.combinedId as string;
+  expect(s.show(combinedId)!.placement ?? null).toBeNull();
+  expect(s.compose().emittedFrameIds).toEqual([combinedId]);
+});
+
+test("F-047: revert of a PLACED combine restores the parts in natural order", () => {
+  const s = mk();
+  s.ingest({ ...HEAD, messages: [u("alpha"), a("ra"), u("beta"), a("rb"), u("gamma"), a("rc")] });
+  const cb = s.combine(["t1", "t2"], { after: "t3" });
+  expect(cb.ok).toBe(true);
+  const r = s.revert((cb as unknown as { commit: { id: string } }).commit.id);
+  expect(r.ok).toBe(true);
+  expect(s.show("t1")!.absorbedInto ?? null).toBeNull();
+  const w = JSON.stringify(s.compose().body);
+  expect(w.indexOf("alpha")).toBeLessThan(w.indexOf("beta"));
+  expect(w.indexOf("beta")).toBeLessThan(w.indexOf("gamma"));
+});

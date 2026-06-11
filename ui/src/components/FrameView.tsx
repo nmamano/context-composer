@@ -33,6 +33,12 @@ export function FrameView(props: {
   onAddFrame?: () => void;
   onToggleCombineMode?: () => void;
   onRunCombine?: () => void;
+  /** F-047: combine's optional insert position — same value semantics as the
+   *  add form's dropdown ("" = engine default: the first picked frame's
+   *  place; "start" = after:null; otherwise a frame id). App owns the state;
+   *  build()/position() map the value, the UI decides nothing. */
+  combineAfter?: string;
+  onCombineAfter?: (v: string) => void;
   /** Zero-target op form (add) renders right under the toolbar. */
   toolbarForm?: ReactNode;
 }) {
@@ -85,8 +91,26 @@ export function FrameView(props: {
           <p className="combine-explainer">
             Tick 2 or more frames below, in the order they should be joined.
             Their text is kept as-is (no AI rewriting); the combined frame
-            takes the place of the first one you pick.
+            takes the place of the first one you pick, unless you choose a
+            different spot below.
           </p>
+          {/* F-047: optional insert position — mirrors the add form's
+              dropdown (values: "" = default, "start", or a frame id). */}
+          <label className="op-param combine-position">
+            insert position
+            <select
+              value={props.combineAfter ?? ""}
+              onChange={(e) => props.onCombineAfter?.(e.target.value)}
+            >
+              <option value="">at the first picked frame's place</option>
+              <option value="start">at the start</option>
+              {props.frames.map((f) => (
+                <option key={f.id} value={f.id}>
+                  after {f.id} — {f.title.slice(0, 40)}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="op-form-actions">
             <button
               type="button"

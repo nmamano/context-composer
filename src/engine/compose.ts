@@ -95,13 +95,29 @@ function buildEmissionOrder(
   // the full-store baseline does — excluded here, injected as placed).
   let base: Frame[] = [];
   const placed: Frame[] = [];
+  const memberIds = new Set(members.map((m) => m.id));
   for (const m of members) {
     if (m.origin === "added") continue;
+    if (m.origin === "combined" && m.placement) continue; // F-047: injected below
     if (m.placement) placed.push(m);
     else base.push(m);
   }
   for (const a of allFrames) {
-    if (a.origin === "added" && !a.deleted) placed.push(a);
+    if (a.deleted) continue;
+    if (a.origin === "added") {
+      placed.push(a);
+      continue;
+    }
+    // F-047: a combined frame with EXPLICIT placement emits via this splice
+    // (resolution at the part slots skips it — see resolve()). Placement is
+    // an ORDERING override, not membership creation (the move precedent):
+    // inject only when a live part is a member of this emission — or when
+    // the combined frame is itself a member (full-store mode).
+    if (a.origin === "combined" && a.placement) {
+      if (memberIds.has(a.id) || members.some((m) => m.absorbedInto === a.id)) {
+        placed.push(a);
+      }
+    }
   }
   placed.sort(byStoreOrder);
 
@@ -114,7 +130,10 @@ function buildEmissionOrder(
   for (const p of placed) {
     let after = p.placement?.after ?? null;
     if (after !== null && (!emitting.has(after) || after === p.id)) {
-      if (p.origin !== "added") {
+      // F-047: placed combined frames take the added-frame fallback (nearest
+      // preceding emitting frame) — they are not members, so the member
+      // natural-order fallback would silently drop them.
+      if (p.origin !== "added" && p.origin !== "combined") {
         memberFallback.add(p.id); // moved member, absent anchor → natural order
         continue;
       }
@@ -224,7 +243,11 @@ export function compose(
       return;
     }
     if (f.absorbedInto) {
-      resolve(byId.get(f.absorbedInto), depth + 1);
+      const absorber = byId.get(f.absorbedInto);
+      // F-047: an absorber with EXPLICIT placement emits via the placement
+      // splice (buildEmissionOrder injected it) — never at a part's slot.
+      if (absorber?.placement) return;
+      resolve(absorber, depth + 1);
       return;
     }
     if (f.splitInto && f.splitInto.length > 0) {

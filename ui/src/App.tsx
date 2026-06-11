@@ -75,6 +75,8 @@ export function App() {
   const [opError, setOpError] = useState<OpError | null>(null);
   const [combineMode, setCombineMode] = useState(false);
   const [combineIds, setCombineIds] = useState<string[]>([]);
+  // F-047: combine's optional insert position ("" = engine default).
+  const [combineAfter, setCombineAfter] = useState("");
   const [historySubView, setHistorySubView] = useState<HistorySubView>("commits");
   /** F-014: a selection carried INTO the history tab is stale context there —
    *  it's stashed on entry and restored on exit. Selecting a frame WHILE in
@@ -160,6 +162,7 @@ export function App() {
         if (op.verb === "combine") {
           setCombineMode(false);
           setCombineIds([]);
+          setCombineAfter(""); // F-047: position resets with the mode
         }
       } catch (err) {
         setOpError({
@@ -424,8 +427,15 @@ export function App() {
               setPendingOp(null);
               setCombineMode((m) => !m);
               setCombineIds([]);
+              setCombineAfter("");
             }}
-            onRunCombine={() => void runOp(combineOp, combineIds, {})}
+            // F-047: pass the picked position; build()/position() omit ""
+            // so the engine default (first pick's slot) stays the default.
+            onRunCombine={() =>
+              void runOp(combineOp, combineIds, { after: combineAfter })
+            }
+            combineAfter={combineAfter}
+            onCombineAfter={setCombineAfter}
           />
         ) : (
           <HistoryView

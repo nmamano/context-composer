@@ -37,7 +37,11 @@ function ParamField(props: {
           onChange={(e) => props.onChange(e.target.value)}
         >
           <option value="">
-            {props.verb === "add" ? "at the end" : "(pick a position)"}
+            {props.verb === "add"
+              ? "at the end"
+              : props.verb === "combine"
+                ? "at the first picked frame's place"
+                : "(pick a position)"}
           </option>
           <option value="start">at the start</option>
           {props.frames?.map((f) => (

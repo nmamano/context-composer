@@ -473,9 +473,16 @@ export function startProxy(opts: {
       }
 
       if (path === "/control/combine" && req.method === "POST") {
-        const parsed = (await req.json().catch(() => null)) as { ids?: string[] } | null;
+        const parsed = (await req.json().catch(() => null)) as
+          | { ids?: string[]; after?: string | null }
+          | null;
         if (!Array.isArray(parsed?.ids)) return json({ error: "missing ids" }, 400);
-        const result = store.combine(parsed.ids);
+        // F-047: optional explicit placement; key absent → engine default
+        // (first pick's slot). Refusals (bad anchor) come from the engine.
+        const result = store.combine(
+          parsed.ids,
+          parsed.after !== undefined ? { after: parsed.after } : {},
+        );
         return result.ok
           ? json({ conv: conv.id, commit: publicCommit(result.commit) })
           : json({ error: result.error }, 400);
