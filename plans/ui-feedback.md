@@ -705,11 +705,12 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-070 — Restore should only appear on offloaded frames
 - reported: 2026-06-11 · class: design-question (touches the LOCKED no-state-hiding rail — needs Nil's explicit one-off authorization + plan gate)
-- status: awaiting Nil's explicit go (rail tension explained to him)
+- status: implemented + in reviewer sign-off (batch 15); plan-gate GO recorded in its commit
 - what: "restore op should only appear for offloaded frames, if that's the only case where it applies."
 - where: per-frame ops menu, restore entry
 - evidence: his conditional HOLDS — engine restore() applies ONLY to offloaded frames (refuses everything else: "frame X is not offloaded"). But hiding it by state collides with the standing reviewer-conditioned rail: "ops are never hidden or disabled because of frame STATE — the daemon's refusal is the source of truth" (5b condition, restated in phase5e standing orders). Precedent tension both ways: F-063 filtered can-only-refuse DESTINATIONS (rationale: a destination list, not an op); restore-on-non-offloaded is a deterministic, zero-information refusal — but it IS an op entry. F-045/F-053-style: a narrow Nil-authorized exception is the honest path
-- resolution: options: (a) Nil authorizes the exception → menu shows restore only when summary.offloaded (display-only; CLI untouched; refusals still speak for anything else) — plan gate, then batch; (b) relocation instead of hiding: restore leaves the menu entirely (like edit/retitle) and appears as an affordance ON the offloaded chip/fileReference row in the card/panel — arguably cleaner (the action lives where the state shows) and the menu stays state-blind; (c) keep as-is. My lean: (b). Awaiting his pick
+- decided (Nil, 2026-06-11): option (b) — RELOCATION, not hiding: restore leaves the ops menu entirely (joins edit/retitle in RELOCATED_TO_PANEL-style treatment) and appears as a button ON the offloaded indicator itself (the chip on the card and/or the fileReference row in the panel) — the action lives exactly where the state it undoes is shown; the menu stays state-blind, so the no-state-hiding rail survives intact
+- resolution: plan gate → implement (batch 15)
 
 ## F-071 — Side-panel title/summary tooltips clip on the right screen edge
 - reported: 2026-06-11 · class: bug (display)
@@ -737,7 +738,7 @@ backfilled (`fixed@<hash>`) in the next commit that touches this file.
 
 ## F-074 — README: screenshots of all views, self-driven realistic content
 - reported: 2026-06-11 · class: docs request
-- status: triaged (after batch 13 commits; quota note for Nil below)
+- status: fixed (docs commit; reviewer-signed 2026-06-11 after one P1 — daemon-ownership guards — fixed + both paths verified live; hash backfilled next)
 - what: "could you add screnshots of all the views to the README, with descriptions? im not sure how you would be able to 'populate' the views with a realistic conversation. is that something you can drive entirely by yourself?"
 - evidence: fully self-drivable: throwaway daemon (own port + tmp store) + a scripted REAL conversation through the proxy (claude CLI turns — small quota burn, ~4-6 turns under the standing grant) or the committed fixture (quota-free but stub-flavored content); Playwright (the ui-smoke machinery) takes deterministic screenshots at a fixed viewport; shots land in docs/screenshots/ and the README gains a per-view gallery with descriptions
-- resolution: planned: scripts/capture-readme-shots.ts — populate (real scripted session: ask → tool turn → offload → split → retitle, so every view shows something meaningful), screenshot conversation/frames/details/history(commits+timeline), commit shots + README section
+- resolution: scripts/capture-readme-shots.ts — throwaway daemon on :8813 with OWNERSHIP GUARDS (reviewer P1: fail-fast if the port already serves; readiness requires the spawned child alive + its own banner on the piped stderr before HTTP counts; early exit surfaces code+stderr), real 4-turn claude session through the proxy, title-based enrichment wait (a live race: F-062 re-enrichment double-counts events while a later frame is still queued — wait on placeholder titles instead), delete→revert→offload→add→split, 5 Playwright shots at 1360×850 (cursor parked — a stray hover tooltip contaminated run 1) into docs/screenshots/; README gains 'A tour of the UI' with per-view descriptions + the reproduce command. Quota: ~4 runs × 4 sonnet turns + enrichment under Nil's grant (he commissioned realistic content)

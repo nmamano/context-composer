@@ -44,6 +44,56 @@ and fixes ship in small reviewer-gated batches.
   grows; manual edits always win.
 - **Wiretap**: an append-only JSONL of raw wire evidence for debugging/verifying.
 
+## A tour of the UI
+
+Every screenshot below comes from a **real Claude Code session** driven through
+the proxy — a short conversation about building a photo-renaming CLI, followed
+by a few ops. The whole thing is reproducible with one command:
+`bun run scripts/capture-readme-shots.ts` (boots a throwaway daemon, drives the
+session, runs the ops, photographs every view).
+
+### Conversation view
+
+The chat as the model currently sees it — membership and order come from the
+engine's compose, so deleted frames are gone and edited/offloaded frames show
+their current stand-in text. Clicking a bubble selects its frame.
+
+![conversation view](docs/screenshots/conversation.png)
+
+### Frame view
+
+The manipulation surface: one card per frame with its auto-generated title and
+summary, token cost, and state chips (`offloaded`, `added`, `split`, …). Note
+`t3` carrying its offload stub, the user-added note `t5`, and `t4` replaced by
+its two split children with inherited "(part 1/2)" titles. Every card has an
+ops menu; `add frame` and `combine` live in the toolbar.
+
+![frame view](docs/screenshots/frames.png)
+
+### Details panel
+
+Full content for one frame, explicit about *current emission* (what the model
+sees next send) vs *source* (what the agent keeps resending). The title, the
+description, and each plain-text message edit in place — with AI-regenerate
+buttons beside the metadata fields.
+
+![details panel](docs/screenshots/details.png)
+
+### History — commits
+
+Every operation is a commit with a before/after diff; any commit can be
+reverted from its card (the `delete` + its `revert` at the top were part of
+this session). `revert last` undoes the newest commit.
+
+![history commits](docs/screenshots/history-commits.png)
+
+### History — timeline
+
+The full audit trail: wire captures (request/reply), enrichment notes, and
+every op — nothing happens to the context silently.
+
+![history timeline](docs/screenshots/history-timeline.png)
+
 ## Run
 
 ```bash
