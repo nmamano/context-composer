@@ -1,5 +1,7 @@
 # Context Composer — Design Document
 
+> **Writeup:** [Context Composer: Editing Your Agent's Context Behind Its Back](https://nilmamano.com/blog/context-composer)
+
 ## 1. Summary
 
 **Context Composer** reimagines LLM context as a sequence of composable **semantic
@@ -1149,7 +1151,7 @@ rule lives or dies on this gate).
   pays the one-time cache-bust cost to show control/token reclamation — call this out in
   the write-up so it doesn't read as a violation of the "keep the head stable" caching
   guidance (§9); it's the exception that demonstrates the rule.
-- **Files/modules:** `demo/` (scripts/fixtures), `blog/` (write-up), minor UI polish.
+- **Files/modules:** `demo/` (scripts/fixtures), the write-up (published on the personal site at [nilmamano.com/blog/context-composer](https://nilmamano.com/blog/context-composer)), minor UI polish.
 - **Acceptance:** each money shot runs start-to-finish in the UI; the blog draft explains
   the paradigm and the provider-efficiency framing from §9.
 - **Risks/unknowns:** demo determinism under LLM variability — pin prompts/fixtures.

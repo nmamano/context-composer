@@ -1,5 +1,7 @@
 # Context Composer
 
+> **Writeup:** [Context Composer: Editing Your Agent's Context Behind Its Back](https://nilmamano.com/blog/context-composer)
+
 Live, in-conversation, model-unaware surgery on the working context, at the
 frame/turn level. A transparent proxy sits at the rendered-context boundary of a
 real agent (e.g. Claude Code), decomposes every `/v1/messages` request into
