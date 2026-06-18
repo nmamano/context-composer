@@ -291,8 +291,8 @@ test("regen via injected stub: summarize/compact/retitle; missing-llm and thrown
   }
 });
 
-// ── durability: snapshot v6 ───────────────────────────────────────────────────
-test("summary metadata and drop-results representation survive a restart (snapshot v6)", () => {
+// ── durability: snapshot v7 ───────────────────────────────────────────────────
+test("summary metadata and drop-results representation survive a restart (snapshot v7)", () => {
   const storePath = join(dir, "store.json");
   const reopen = () => new FrameStore(new JsonFileStore(storePath), "test", join(dir, "frames"));
   const s1 = reopen();

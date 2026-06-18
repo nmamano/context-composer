@@ -11,8 +11,8 @@
 //
 // Conversation identity — derived, never heuristic:
 //   key = first-frame anchorFp (the OPENING TURN's normalized fingerprint)
-// The first message is the right key because it is BOTH unique-per-conversation AND
-// stable-across-resends — and the head (system prompt + tools) is NEITHER:
+// The first message is the right key: in practice it is BOTH unique-per-conversation
+// AND stable-across-resends — and the head (system prompt + tools) is NEITHER:
 //   - UNIQUE: the opening turn distinguishes conversations — even the agent's own
 //     background requests (title/recap generation, quota/skills probes) open with
 //     distinct first messages. The system prompt is the opposite: it describes the

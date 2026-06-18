@@ -812,8 +812,8 @@ rule lives or dies on this gate).
 - **Vertical slice:**
   - **Conversation registry** (`engine/registry.ts`): one FrameStore per conversation;
     identity is *derived*, never heuristic — `key = first-frame anchorFp` (the opening
-    turn's normalized fingerprint). The first message is the right key because it is
-    BOTH unique-per-conversation (even the agent's own background requests — title/
+    turn's normalized fingerprint). The first message is the right key because in
+    practice it is BOTH unique-per-conversation (even the agent's own background requests — title/
     recap generation, quota/skills probes — open with distinct first messages) AND
     stable-across-resends (history only appends, so it is immutable in the agent's own
     view; proven stable across process restarts/resumes). The head is deliberately
@@ -1380,7 +1380,7 @@ compose() then emits OUR frame order and OUR representation — never the resend
 | Op | What the agent resends | Mapping |
 |---|---|---|
 | `delete` | the original content | source → **tombstone** → omitted from compose |
-| `edit` / `compact` / `summarize` / `offload` | the **pre-op original** | source → frame; emit **our** representation, ignore the resent original |
+| `edit` / `compact` / `summarize-results` / `offload` | the **pre-op original** | source → frame; emit **our** representation, ignore the resent original |
 | `move` | the original order | lookup is order-independent; compose emits **our** order |
 | `combine` | the parts, separately | **many** sources → **one** frame (emit once, at the first part's slot) |
 | `split` | the original, as one message | **one** source → **many** frames |

@@ -35,7 +35,12 @@ import type { Frame, RequestEnvelope } from "./types.ts";
 // ContextEvent.direction (F-052) and Frame.enrichment (F-062, the auto-metadata
 // ownership record) — older v6 files simply lack them and degrade gracefully
 // (legacy event rendering; fill-only enrichment).
-export const SNAPSHOT_VERSION = 6;
+// v7 (op rename, task 97ad0626): commit/event op-kind values strip → drop-results,
+// summarize → summarize-results. Persisted commits/events carry these strings, so a
+// v6 store holding a historical strip/summarize commit would load but then refuse to
+// revert/round-trip it (unknown kind). Bump so older stores fail loudly per policy,
+// not silently. No migrations — move or delete the file to reset.
+export const SNAPSHOT_VERSION = 7;
 
 /** The whole durable state. Internal seq fields (createdAt/modifiedAt/seq) live here —
  *  they belong in the store but never on the wire (compose strips them out already). */
