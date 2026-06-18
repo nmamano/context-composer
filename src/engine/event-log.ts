@@ -16,7 +16,7 @@
 export type ContextEventType =
   | "capture" | "delete" | "revert" | "edit" | "compact" | "offload" | "restore"
   | "add" | "move" | "combine" | "split"
-  | "strip" | "summarize" | "retitle"
+  | "drop-results" | "summarize-results" | "retitle"
   // Engine batch A (plans/ui-feedback.md F-001): async ingest enrichment filled
   // title/summary metadata. Audited-not-silent (reviewer condition) — an event,
   // never a commit (metadata fill mirrors the capture-time placeholder).

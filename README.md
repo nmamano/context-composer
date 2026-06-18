@@ -36,7 +36,7 @@ and fixes ship in small reviewer-gated batches.
   frame per turn (user message + assistant reply + its tool loop, bundled).
 - **Operations** — same verbs from the CLI and the UI, mechanically kept in
   parity: `delete`, `edit`, `compact`, `offload`/`restore`, `add`, `move`,
-  `combine`, `split`, `strip`, `summarize`, `retitle`, `revert`.
+  `combine`, `split`, `drop-results`, `summarize-results`, `retitle`, `revert`.
 - **History + audit**: every op is a commit (two-column diffs, click-to-revert);
   every wire event (request/reply captures, enrichment) is a timeline entry.
 - **Auto titles/summaries** (opt-in): each captured turn gets LLM-generated

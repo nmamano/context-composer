@@ -77,7 +77,7 @@ export function detailsFields(f: Frame): DetailField[] {
   if (f.stopReason !== undefined && f.stopReason !== null) {
     rows.push(adv("stop reason", f.stopReason));
   }
-  // §11 Phase 5b — strip/summarize take tool_use_ids of tool_result blocks in
+  // §11 Phase 5b — drop-results/summarize-results take tool_use_ids of tool_result blocks in
   // the CURRENT EMISSION (representation ?? messages — what the store
   // transforms); surface them so the op form can be filled from here.
   const resultIds: string[] = [];

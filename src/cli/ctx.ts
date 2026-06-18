@@ -291,21 +291,21 @@ async function cmdSplit(args: string[]): Promise<void> {
   );
 }
 
-/** §11 Phase 3d sub-frame ops: strip/summarize target tool_result blocks
- *  inside a frame (content stubbed/summarized; tool structure preserved);
+/** §11 Phase 3d sub-frame ops: drop-results/summarize-results target tool_result
+ *  blocks inside a frame (content stubbed/summarized; tool structure preserved);
  *  retitle is display metadata only. --regen goes through the daemon's LLM
  *  port (CC_LLM_API_KEY + CC_LLM_MODEL). */
-async function cmdStrip(args: string[]): Promise<void> {
+async function cmdDropResults(args: string[]): Promise<void> {
   const id = args.find((a) => !a.startsWith("-"));
-  if (!id) fail("usage: ctx strip <frame> --result <id[,id...]> | --all-results");
+  if (!id) fail("usage: ctx drop-results <frame> --result <id[,id...]> | --all-results");
   const body: Record<string, unknown> = { id };
   const rIdx = args.indexOf("--result");
   if (rIdx >= 0 && args[rIdx + 1] !== undefined) {
     body.resultIds = args[rIdx + 1]!.split(",").map((x) => x.trim());
   } else if (args.includes("--all-results")) {
     body.all = true;
-  } else fail("usage: ctx strip <frame> --result <id[,id...]> | --all-results");
-  const result = (await post("/control/strip", body)) as {
+  } else fail("usage: ctx drop-results <frame> --result <id[,id...]> | --all-results");
+  const result = (await post("/control/drop-results", body)) as {
     conv?: string;
     commit?: { id: string; params: { blocks?: number } };
     error?: string;
@@ -316,9 +316,9 @@ async function cmdStrip(args: string[]): Promise<void> {
   );
 }
 
-async function cmdSummarize(args: string[]): Promise<void> {
+async function cmdSummarizeResults(args: string[]): Promise<void> {
   const id = args.find((a) => !a.startsWith("-"));
-  if (!id) fail("usage: ctx summarize <frame> [--result <ids>|--all-results] --text <s> | --regen");
+  if (!id) fail("usage: ctx summarize-results <frame> [--result <ids>|--all-results] --text <s> | --regen");
   const body: Record<string, unknown> = { id };
   const rIdx = args.indexOf("--result");
   if (rIdx >= 0 && args[rIdx + 1] !== undefined) {
@@ -327,8 +327,8 @@ async function cmdSummarize(args: string[]): Promise<void> {
   const tIdx = args.indexOf("--text");
   if (tIdx >= 0 && args[tIdx + 1] !== undefined) body.text = args[tIdx + 1];
   else if (args.includes("--regen")) body.regen = true;
-  else fail("usage: ctx summarize <frame> [--result <ids>|--all-results] --text <s> | --regen");
-  const result = (await post("/control/summarize", body)) as {
+  else fail("usage: ctx summarize-results <frame> [--result <ids>|--all-results] --text <s> | --regen");
+  const result = (await post("/control/summarize-results", body)) as {
     conv?: string;
     commit?: { id: string; params: { blocks?: number } };
     error?: string;
@@ -481,8 +481,8 @@ export const CTX_MUTATING_VERBS = [
   "move",
   "combine",
   "split",
-  "strip",
-  "summarize",
+  "drop-results",
+  "summarize-results",
   "retitle",
   "revert",
 ] as const;
@@ -514,8 +514,8 @@ const COMMANDS: Record<Verb, (args: string[]) => Promise<void>> = {
   move: cmdMove,
   combine: cmdCombine,
   split: cmdSplit,
-  strip: cmdStrip,
-  summarize: cmdSummarize,
+  "drop-results": cmdDropResults,
+  "summarize-results": cmdSummarizeResults,
   retitle: cmdRetitle,
   compose: cmdCompose,
   history: cmdHistory,
@@ -538,7 +538,7 @@ async function main(): Promise<void> {
   const handler = cmd !== undefined ? COMMANDS[cmd as Verb] : undefined;
   if (!handler) {
     fail(
-      `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | strip <id> --result <ids>|--all-results | summarize <id> --text <s>|--regen | retitle <id> --title <t>|--regen | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
+      `unknown command ${cmd ?? "(none)"}. verbs: list | show <id> | delete <id...> | edit <id> --text <t>|--raw <json> | compact <id> --text <s> | offload <id> [--summary <s>] | restore <id> | add --text <t> [--after <id>|--start] | move <id> --after <id>|--start | combine <id...> | split <id> --at <i,...> | drop-results <id> --result <ids>|--all-results | summarize-results <id> --text <s>|--regen | retitle <id> --title <t>|--regen | compose [--dump] [--hash-head] [--view-last] | history | timeline | revert [<commit>] | conversations  (global: --conv <id>)`,
     );
   }
   return handler!(args);

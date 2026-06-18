@@ -350,18 +350,18 @@ export function startProxy(opts: {
       }
 
       // §11 Phase 3d sub-frame content ops.
-      if (path === "/control/strip" && req.method === "POST") {
+      if (path === "/control/drop-results" && req.method === "POST") {
         const parsed = (await req.json().catch(() => null)) as
           | { id?: string; resultIds?: string[]; all?: boolean }
           | null;
         if (!parsed?.id) return json({ error: "missing id" }, 400);
-        const result = store.strip(parsed.id, { resultIds: parsed.resultIds, all: parsed.all });
+        const result = store.dropResults(parsed.id, { resultIds: parsed.resultIds, all: parsed.all });
         return result.ok
           ? json({ conv: conv.id, commit: publicCommit(result.commit) })
           : json({ error: result.error }, 400);
       }
 
-      if (path === "/control/summarize" && req.method === "POST") {
+      if (path === "/control/summarize-results" && req.method === "POST") {
         const parsed = (await req.json().catch(() => null)) as
           | { id?: string; resultIds?: string[]; all?: boolean; text?: string; regen?: boolean }
           | null;

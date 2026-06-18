@@ -176,8 +176,8 @@ export const OP_REGISTRY: OpSpec[] = [
     }),
   },
   {
-    verb: "strip",
-    route: "/control/strip",
+    verb: "drop-results",
+    route: "/control/drop-results",
     arity: "single",
     params: [
       { key: "resultIds", label: "tool_use_id(s), comma-separated", kind: "ids" },
@@ -189,8 +189,8 @@ export const OP_REGISTRY: OpSpec[] = [
     }),
   },
   {
-    verb: "summarize",
-    route: "/control/summarize",
+    verb: "summarize-results",
+    route: "/control/summarize-results",
     arity: "single",
     params: [
       { key: "resultIds", label: "tool_use_id(s), comma-separated", kind: "ids" },

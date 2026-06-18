@@ -103,16 +103,16 @@ describe("registry wire-honesty", () => {
       id: "f1",
       at: [99],
     });
-    expect(opByVerb("strip")!.build(["f1"], { all: true })).toEqual({
+    expect(opByVerb("drop-results")!.build(["f1"], { all: true })).toEqual({
       id: "f1",
       all: true,
     });
-    expect(opByVerb("strip")!.build(["f1"], { resultIds: "tu_1, tu_2" })).toEqual({
+    expect(opByVerb("drop-results")!.build(["f1"], { resultIds: "tu_1, tu_2" })).toEqual({
       id: "f1",
       resultIds: ["tu_1", "tu_2"],
     });
     expect(
-      opByVerb("summarize")!.build(["f1"], { all: true, text: "s" }),
+      opByVerb("summarize-results")!.build(["f1"], { all: true, text: "s" }),
     ).toEqual({ id: "f1", all: true, text: "s" });
     expect(
       opByVerb("retitle")!.build(["f1"], { title: "T", summary: "S" }),

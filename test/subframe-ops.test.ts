@@ -1,5 +1,5 @@
-// §11 Phase 3d acceptance — SUB-FRAME CONTENT OPS (strip/summarize/retitle) +
-// the LLM port. strip/summarize transform the frame's CURRENT emission: only
+// §11 Phase 3d acceptance — SUB-FRAME CONTENT OPS (drop-results/summarize-results/retitle) +
+// the LLM port. drop-results/summarize-results transform the frame's CURRENT emission: only
 // the targeted tool_result blocks' CONTENT changes (type/tool_use_id/is_error
 // preserved — the tool pair stays intact; the §5.F sweep is a safety net, not
 // the mechanism). retitle is pure display metadata. The LLM lives at the proxy
@@ -48,13 +48,13 @@ function mk(): FrameStore {
   return new FrameStore(null, "test", join(dir, "frames"));
 }
 
-// ── strip: content stubbed, structure + reasoning intact ─────────────────────
-test("strip --result: stubs only that result's content; pair, reasoning, source intact; tokens drop", () => {
+// ── drop-results: content stubbed, structure + reasoning intact ──────────────
+test("drop-results --result: stubs only that result's content; pair, reasoning, source intact; tokens drop", () => {
   const s = mk();
   s.ingest({ ...HEAD, messages: TOOL_TURN });
   const before = s.show("t1")!.tokenEstimate;
 
-  const r = s.strip("t1", { resultIds: ["tuA"] });
+  const r = s.dropResults("t1", { resultIds: ["tuA"] });
   expect(r.ok).toBe(true);
   const c = s.compose();
   const w = JSON.stringify(c.body);
@@ -74,28 +74,28 @@ test("strip --result: stubs only that result's content; pair, reasoning, source 
   expect(s.show("t1")!.tokenEstimate).toBeLessThan(before);
 });
 
-test("strip --all-results + refusals: unknown id and no-results refuse with NO mutation", () => {
+test("drop-results --all-results + refusals: unknown id and no-results refuse with NO mutation", () => {
   const s = mk();
   s.ingest({ ...HEAD, messages: TOOL_TURN });
 
   // Unknown id refuses, nothing changes (no commit, no representation).
-  const bad = s.strip("t1", { resultIds: ["tuA", "ghost"] });
+  const bad = s.dropResults("t1", { resultIds: ["tuA", "ghost"] });
   expect(bad.ok).toBe(false);
   expect((bad as { ok: false; error: string }).error).toContain("ghost");
   expect(s.history()).toHaveLength(0);
   expect(s.show("t1")!.representation ?? null).toBeNull();
 
   // --all-results works on both.
-  expect(s.strip("t1", { all: true }).ok).toBe(true);
+  expect(s.dropResults("t1", { all: true }).ok).toBe(true);
   const w = JSON.stringify(s.compose().body);
   expect(w).not.toContain("HUGE CONTENT");
   expect(w.split("[stripped by user]").length - 1).toBe(2);
 
   // A frame with no tool_result refuses --all-results with no mutation.
   s.ingest({ ...HEAD, messages: [...TOOL_TURN, { role: "user", content: "plain turn" }] });
-  const none = s.strip("t2", { all: true });
+  const none = s.dropResults("t2", { all: true });
   expect(none.ok).toBe(false);
-  expect(s.history()).toHaveLength(1); // only the earlier strip
+  expect(s.history()).toHaveLength(1); // only the earlier drop-results
 });
 
 test("duplicate tool_use_ids in a raw-authored representation: ALL matching blocks transform; params record", () => {
@@ -114,7 +114,7 @@ test("duplicate tool_use_ids in a raw-authored representation: ALL matching bloc
       },
     ],
   });
-  const r = s.strip("t1", { resultIds: ["dup"] });
+  const r = s.dropResults("t1", { resultIds: ["dup"] });
   expect(r.ok).toBe(true);
   const params = (r as unknown as { commit: { params: { resultIds: string[]; blocks: number } } }).commit.params;
   expect(params.blocks).toBe(2);
@@ -124,8 +124,8 @@ test("duplicate tool_use_ids in a raw-authored representation: ALL matching bloc
   expect(w).not.toContain("copy two");
 });
 
-// ── summarize: one summary repeated across selected results ──────────────────
-test("summarize manual: one supplied summary written into each selected result; revert restores", () => {
+// ── summarize-results: one summary repeated across selected results ──────────
+test("summarize-results manual: one supplied summary written into each selected result; revert restores", () => {
   const s = mk();
   s.ingest({ ...HEAD, messages: TOOL_TURN });
   const r = s.summarizeResults("t1", { all: true }, "both reads succeeded; port 9442");
@@ -133,7 +133,7 @@ test("summarize manual: one supplied summary written into each selected result; 
   const w = JSON.stringify(s.compose().body);
   expect(w).not.toContain("HUGE CONTENT");
   expect(w.split("both reads succeeded; port 9442").length - 1).toBe(2); // repeated per result
-  expect(s.history().map((c) => c.type)).toEqual(["summarize"]);
+  expect(s.history().map((c) => c.type)).toEqual(["summarize-results"]);
 
   // Revert: full results back on the wire.
   expect(s.revert().ok).toBe(true);
@@ -173,20 +173,20 @@ test("retitle: title+summary set and reverted; body and head hash byte-identical
 });
 
 // ── guards matrix ─────────────────────────────────────────────────────────────
-test("strip/summarize guards: offloaded/absorbed/preamble refuse; combined frames are ordinary targets", () => {
+test("drop-results/summarize-results guards: offloaded/absorbed/preamble refuse; combined frames are ordinary targets", () => {
   const s = mk();
   s.ingest({ ...HEAD, messages: [...TOOL_TURN, { role: "user", content: "turn two" }] });
 
-  expect(s.strip("p0", { all: true }).ok).toBe(false);
+  expect(s.dropResults("p0", { all: true }).ok).toBe(false);
   s.offload("t1");
-  expect(s.strip("t1", { all: true }).ok).toBe(false);
+  expect(s.dropResults("t1", { all: true }).ok).toBe(false);
   s.restore("t1");
 
   // Combine t1+t2 → the combined frame is an ordinary content target.
   const cb = s.combine(["t1", "t2"]);
   const combinedId = (cb as unknown as { commit: { params: { combinedId: string } } }).commit.params.combinedId;
-  expect(s.strip("t1", { all: true }).ok).toBe(false); // absorbed part refuses
-  const r = s.strip(combinedId, { all: true });
+  expect(s.dropResults("t1", { all: true }).ok).toBe(false); // absorbed part refuses
+  const r = s.dropResults(combinedId, { all: true });
   expect(r.ok).toBe(true);
   expect(JSON.stringify(s.compose().body)).not.toContain("HUGE CONTENT");
 });
@@ -228,8 +228,8 @@ test("regen via injected stub: summarize/compact/retitle; missing-llm and thrown
     await fetch(`${base}/control/list`);
 
     // summarize --regen: stub output lands in every selected result.
-    const sum = (await (await ctl("summarize", { id: "t1", all: true, regen: true })).json()) as any;
-    expect(sum.commit.type).toBe("summarize");
+    const sum = (await (await ctl("summarize-results", { id: "t1", all: true, regen: true })).json()) as any;
+    expect(sum.commit.type).toBe("summarize-results");
     const c = (await (await fetch(`${base}/control/compose?dump`)).json()) as any;
     expect(JSON.stringify(c.body)).toContain("LLM OUTPUT");
     expect(calls[0]).toContain("read both files"); // prompt carried the emission
@@ -254,7 +254,7 @@ test("regen via injected stub: summarize/compact/retitle; missing-llm and thrown
     // via the retitled frame title rendered into the regen input).
     await ctl("retitle", { id: "t1", title: "FAIL-MARKER" });
     const histBefore = ((await (await fetch(`${base}/control/history`)).json()) as any).commits.length;
-    const fail = await ctl("summarize", { id: "t1", all: true, regen: true });
+    const fail = await ctl("summarize-results", { id: "t1", all: true, regen: true });
     expect(fail.status).toBe(502);
     const histAfter = ((await (await fetch(`${base}/control/history`)).json()) as any).commits.length;
     expect(histAfter).toBe(histBefore);
@@ -276,7 +276,7 @@ test("regen via injected stub: summarize/compact/retitle; missing-llm and thrown
       body: JSON.stringify({ ...HEAD, messages: TOOL_TURN }),
     })).text();
     await fetch(`${base}/control/list`);
-    const res = await fetch(`${base}/control/summarize`, {
+    const res = await fetch(`${base}/control/summarize-results`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: "t1", all: true, regen: true }),
@@ -292,12 +292,12 @@ test("regen via injected stub: summarize/compact/retitle; missing-llm and thrown
 });
 
 // ── durability: snapshot v6 ───────────────────────────────────────────────────
-test("summary metadata and strip representation survive a restart (snapshot v6)", () => {
+test("summary metadata and drop-results representation survive a restart (snapshot v6)", () => {
   const storePath = join(dir, "store.json");
   const reopen = () => new FrameStore(new JsonFileStore(storePath), "test", join(dir, "frames"));
   const s1 = reopen();
   s1.ingest({ ...HEAD, messages: TOOL_TURN });
-  s1.strip("t1", { resultIds: ["tuA"] });
+  s1.dropResults("t1", { resultIds: ["tuA"] });
   s1.retitle("t1", { title: "the read", summary: "two files" });
 
   const s2 = reopen();

@@ -857,17 +857,17 @@ export class FrameStore {
 
   // ---- §11 Phase 3d sub-frame content ops ----
 
-  /** `strip` (§5.C): remove tool-result BLOAT inside a frame while keeping the
+  /** `drop-results` (§5.C): remove tool-result BLOAT inside a frame while keeping the
    *  reasoning AND the tool structure. Semantics (reviewer point A): the
    *  targeted tool_result blocks keep type/tool_use_id/is_error — only their
    *  `content` is replaced with a short stub note, so the tool_use/result pair
    *  stays intact and the §5.F sweep remains a safety net, not the mechanism. */
-  strip(id: string, target: { resultIds?: string[]; all?: boolean }): OpResult {
-    return this.transformResults("strip", id, target, "[stripped by user]");
+  dropResults(id: string, target: { resultIds?: string[]; all?: boolean }): OpResult {
+    return this.transformResults("drop-results", id, target, "[stripped by user]");
   }
 
-  /** `summarize` (§5.C): same transform as strip with a user/LLM summary as the
-   *  replacement. Multi-result semantics: ONE summary repeated across every
+  /** `summarize-results` (§5.C): same transform as drop-results with a user/LLM summary
+   *  as the replacement. Multi-result semantics: ONE summary repeated across every
    *  selected result (3d simplicity, reviewer point D). The LLM lives at the
    *  proxy layer (`--regen`); the store only ever receives text — deterministic. */
   summarizeResults(
@@ -875,11 +875,11 @@ export class FrameStore {
     target: { resultIds?: string[]; all?: boolean },
     text: string,
   ): OpResult {
-    return this.transformResults("summarize", id, target, text);
+    return this.transformResults("summarize-results", id, target, text);
   }
 
   private transformResults(
-    type: "strip" | "summarize",
+    type: "drop-results" | "summarize-results",
     id: string,
     target: { resultIds?: string[]; all?: boolean },
     replacement: string,
@@ -1292,7 +1292,7 @@ export class FrameStore {
     }
     const revertible = [
       "delete", "edit", "compact", "offload", "restore", "add", "move", "combine", "split",
-      "strip", "summarize", "retitle",
+      "drop-results", "summarize-results", "retitle",
     ];
     if (!revertible.includes(target.type)) {
       return {

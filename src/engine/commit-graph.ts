@@ -16,7 +16,7 @@
 export type CommitType =
   | "delete" | "revert" | "edit" | "compact" | "offload" | "restore"
   | "add" | "move" | "combine" | "split"
-  | "strip" | "summarize" | "retitle";
+  | "drop-results" | "summarize-results" | "retitle";
 
 /** A commit = a mutating operation, per §7 Operation. `branchId` is constant "main" in
  *  Phase 2; `parentCommitId` chains the linear history; `seq` is the shared logical

@@ -64,8 +64,8 @@ export const menuOps = (): OpSpec[] =>
 
 /** F-065/F-073 (Nil: "add a tool tip for every operation"): plain-language
  *  tips for EVERY menu verb — what it does to what the model sees, no jargon
- *  (the F-028 ban applies; pinned in test). summarize's states the corrected
- *  truth: a WIRE op on tool results, not the card's title/summary. */
+ *  (the F-028 ban applies; pinned in test). summarize-results' states the
+ *  corrected truth: a WIRE op on tool results, not the card's title/summary. */
 const MENU_TIPS: Record<string, string> = {
   delete: "remove this frame from what the model sees — undo from the history tab",
   compact: "swap this frame's whole content for a short summary (the model sees less)",
@@ -73,8 +73,8 @@ const MENU_TIPS: Record<string, string> = {
   restore: "bring an offloaded frame's full content back",
   move: "change where this frame sits in the conversation",
   split: "cut this frame into smaller frames",
-  strip: "drop bulky tool results inside this frame",
-  summarize:
+  "drop-results": "drop bulky tool results inside this frame",
+  "summarize-results":
     "swap chosen tool results inside this frame for a short summary the model sees instead",
 };
 

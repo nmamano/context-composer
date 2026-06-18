@@ -246,8 +246,8 @@ This is the exhaustive list of operations. They fall into six groups:
 | `import` | B | Cherry-pick a frame from another branch/conversation |
 | `edit` | C | Manually replace a frame's text |
 | `compact` | C | LLM-summarize a whole frame to cut tokens |
-| `strip` | C | Remove specific tool-call results inside a frame |
-| `summarize` | C | LLM-summarize tool results / sub-parts inside a frame |
+| `drop-results` | C | Remove specific tool-call results inside a frame |
+| `summarize-results` | C | LLM-summarize tool results / sub-parts inside a frame |
 | `retitle` | C | (Re)generate or set a frame's title/summary |
 | `offload` | D | Swap full text for summary + file reference |
 | `restore` | D | Re-inject an offloaded frame's full text |
@@ -327,14 +327,14 @@ essence ("user asked X, assistant explained Y") while preserving its semantic
 contribution. This is *frame-level compaction* — the key insight that compaction
 should be granular and targeted, not an all-or-nothing operation on the whole window.
 
-**`strip <frame> [--result <id...>|--all-results]`** — Remove specific tool-call
+**`drop-results <frame> [--result <id...>|--all-results]`** — Remove specific tool-call
 **results** inside a frame without deleting the frame. Canonical use case: an assistant
 turn made three API calls with long outputs; keep the reasoning, drop the raw output
 bloat.
 
-**`summarize <frame> [--results|--range ...]`** — LLM-summarize a *part* of a frame
+**`summarize-results <frame> [--results|--range ...]`** — LLM-summarize a *part* of a frame
 (e.g., compress long tool results in place) rather than the whole frame. The
-finer-grained sibling of `compact`/`strip`.
+finer-grained sibling of `compact`/`drop-results`.
 
 **`retitle <frame> [--title <t>] [--summary <s>] [--regen]`** — Set or regenerate a
 frame's title/summary. Titles/summaries are auto-generated on creation; this lets the
@@ -342,7 +342,7 @@ user correct them or refresh after edits.
 
 > **Why so many content ops?** There isn't a single `compact` primitive — there's a
 > *rich toolkit* for reshaping the part of the context you care about. `compact`,
-> `strip`, `summarize`, `edit`, `combine`, `split` are all facets of "reshape this
+> `drop-results`, `summarize-results`, `edit`, `combine`, `split` are all facets of "reshape this
 > region of context to be exactly as useful as it needs to be."
 
 ---
@@ -443,8 +443,8 @@ model sees only the composed (mutated) state — never the operation history.
 2. **Code iteration cleanup.** Five versions of a file sit in context. `combine` the
    old ones into a "previous attempts" frame, optionally `compact` it. Context now
    holds the current version + a pointer to what was tried.
-3. **Tool-call spam.** An assistant turn made three calls with huge outputs. `strip`
-   two results and `summarize` the third; reasoning stays, bloat goes.
+3. **Tool-call spam.** An assistant turn made three calls with huge outputs. `drop-results`
+   two results and `summarize-results` the third; reasoning stays, bloat goes.
 4. **Branch to explore.** `branch` from an earlier frame, try a different direction,
    keep the original. Later `import` the best frames from one branch back into another.
 5. **Offload to external memory.** A big but maybe-needed frame: `offload` it to a
@@ -488,11 +488,11 @@ ContextEvent /* the complete, append-only audit timeline */ {
 Operation /* = Commit (the revertible subset of events) */ {
   id              : string
   type            : "add" | "delete" | "combine" | "split" | "move" |
-                    "import" | "edit" | "compact" | "strip" | "summarize" |
+                    "import" | "edit" | "compact" | "drop-results" | "summarize-results" |
                     "retitle" | "offload" | "restore" | "branch" |
                     "checkout" | "revert" | "tag"
   affectedFrameIds: string[]
-  params          : object        // op-specific (e.g., split marker, summarize range)
+  params          : object        // op-specific (e.g., split marker, summarize-results range)
   timestamp       : timestamp
   note            : string | null
   branchId        : string
@@ -550,8 +550,8 @@ Session {
 1. Messages have a standard structure: user / assistant (with optional tool calls and
    results) / system.
 2. Tool calls are discrete, inspectable units within an assistant message — not opaque
-   blobs. *If this holds*, tool calls are first-class within frames (enabling `strip`
-   / `summarize` on individual results); *if not*, they degrade gracefully to plain
+   blobs. *If this holds*, tool calls are first-class within frames (enabling `drop-results`
+   / `summarize-results` on individual results); *if not*, they degrade gracefully to plain
    text.
 3. The API supports **editing an earlier message and re-running from that point** —
    which Claude and ChatGPT both already do. Context Composer's frame editing is just
@@ -988,8 +988,8 @@ rule lives or dies on this gate).
     the first part's slot (wiretap emittedFrameIds vs viewFrameIds); the model's
     own recap listed every question EXCEPT the deleted one. Originally:
     structural reshaping.
-  - **3d** `strip`, `summarize`, `retitle` — **Status: built and live-validated
-    (2026-06-10).** strip/summarize transform the frame's CURRENT emission via
+  - **3d** `drop-results`, `summarize-results`, `retitle` — **Status: built and live-validated
+    (2026-06-10).** drop-results/summarize-results transform the frame's CURRENT emission via
     the 3a representation machinery: targeted tool_result blocks keep their
     structure (type/tool_use_id/is_error) and only `content` is replaced (stub
     note / one summary repeated per selected result) — the tool pair stays
@@ -1018,14 +1018,14 @@ rule lives or dies on this gate).
   - `offload`: `ctx offload <frame>` → `compose --dump` shows the stub + file path (not the
     full text) and the frame's token estimate drops; the wrapped agent reading that path
     yields a new tool-result frame.
-  - `strip`/`summarize`/`retitle`: `ctx strip <frame> --result <id>` → `compose --dump`
-    shows that tool result gone while the turn's reasoning remains; `ctx summarize <frame>
+  - `drop-results`/`summarize-results`/`retitle`: `ctx drop-results <frame> --result <id>` → `compose --dump`
+    shows that tool result gone while the turn's reasoning remains; `ctx summarize-results <frame>
     --results` → the result is replaced by a shorter summary in the dump; `ctx retitle
     <frame> --regen` → `ctx list` shows the new title/summary (composed payload unchanged).
   - `combine`/`split`/`move`/`add`: `compose --dump` shows the new frame set/order.
 - **Scope guard (anti-horizontal):** each op is independently shippable/demoable; resist
   landing them as one undifferentiated layer.
-- **Risks/unknowns:** LLM-backed ops (`compact`/`summarize`/`retitle`) need
+- **Risks/unknowns:** LLM-backed ops (`compact`/`summarize-results`/`retitle`) need
   deterministic-enough output to not gratuitously bust the cache; `offload` depends on the
   agent's file-read tool + a reachable path.
 - **Size:** L (split across 3a–3d).
@@ -1115,7 +1115,7 @@ rule lives or dies on this gate).
     the stub (with artifact fileReference) and the reverted edit's restored source,
     upstream 200. `checkout` and branch/tree visualization remain parked with Phase 4.
   - **5d** (`9fdfeeb`) — regen via SUBSCRIPTION: the LLM-backed op paths (`--regen` on
-    compact/summarize/retitle) gain a `claude`-CLI client so they run on the user's
+    compact/summarize-results/retitle) gain a `claude`-CLI client so they run on the user's
     existing subscription session — no API key; the API-key client remains the
     alternative. Default daemon/test posture stays quota-free (explicit env gates).
 - **Phase 5e (ongoing):** live UI-refinement loop — Nil tests the real UI; every report
