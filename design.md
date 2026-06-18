@@ -812,13 +812,24 @@ rule lives or dies on this gate).
 - **Vertical slice:**
   - **Conversation registry** (`engine/registry.ts`): one FrameStore per conversation;
     identity is *derived*, never heuristic — `key = first-frame anchorFp` (the opening
-    turn's normalized fingerprint; history only appends, so it is immutable in the
-    agent's own view). The head is deliberately **excluded** from identity: wiretap
-    evidence shows the agent embeds a per-invocation billing hash in a system block
-    (`cch=…` re-keys on every process start/resume), and tools can grow mid-conversation
-    (deferred/MCP loading) — keying on either forks the conversation and strands the
-    user's edits. Known collision (accepted, visible in `ctx conversations`): two
-    distinct conversations opening with a byte-identical first message. Control routes
+    turn's normalized fingerprint). The first message is the right key because it is
+    BOTH unique-per-conversation (even the agent's own background requests — title/
+    recap generation, quota/skills probes — open with distinct first messages) AND
+    stable-across-resends (history only appends, so it is immutable in the agent's own
+    view; proven stable across process restarts/resumes). The head is deliberately
+    **excluded** because it is neither: the system prompt describes the agent, its
+    tools, and the project, so it is essentially *identical across all of your
+    conversations* and cannot tell them apart (the **primary** reason); and it is
+    unstable — wiretap evidence shows the agent embeds a per-launch billing/attestation
+    token in a system block (`cch=…` re-keys on every process start/resume), and tools
+    can grow mid-conversation (deferred/MCP loading) — so keying on it would fork the
+    conversation and strand the user's edits (the **secondary** reason). Known
+    limitation — the same-first-message collision (accepted, visible in
+    `ctx conversations`): two distinct conversations opening with a byte-identical first
+    message produce the same key and route to the **same bucket**. The second does not
+    interleave; because compose emits the whole bucket, it inherits — is overwritten by
+    — the first's accumulated history, and its own new turns append to that shared
+    bucket, so the two appear as **one** conversation. Control routes
     target the **active** conversation — the most **recent wire activity** wins
     (F-058a, Nil-decided 2026-06-11: "active" = the conversation being talked to right
     now): the registry's activity seq is bumped on every request ingest and every
@@ -871,9 +882,10 @@ rule lives or dies on this gate).
 - **Scope guard:** no curation in compose — nothing is added to or removed from the
   model's context except the user's explicit edits; detection is surfaced, never acted
   on. No reasoning-display features. No multi-agent routing beyond the derived
-  conversation key (two distinct conversations with identical head *and* identical first
-  message collide — accepted tracer limitation, documented; see Phase 2.7 for the
-  observed instance).
+  conversation key (two distinct conversations opening with a byte-identical first
+  message produce the same key and share one bucket — the second is overwritten by the
+  first's history and they appear as one; accepted tracer limitation, documented; see
+  Phase 2.7 for the observed instance).
 - **Status:** **Built and live-validated (2026-06-10).** A real interactive TUI session
   ran multi-turn thinking + tool use with zero 400s; quota/title side queries landed in
   their own conversations; signed husks passed faithfully (warnings surfaced, nothing

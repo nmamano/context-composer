@@ -11,22 +11,33 @@
 //
 // Conversation identity — derived, never heuristic:
 //   key = first-frame anchorFp (the OPENING TURN's normalized fingerprint)
-// The opening turn is the one component of a request that is byte-stable across the
-// agent's own lifecycle: history only ever appends, so the first message is fixed —
-// and it proved stable across process restarts/resumes in live evidence, modulo the
-// relocated cache_control and string/array re-encoding that identity normalization
-// already strips. The HEAD is deliberately NOT part of the key: live wiretap
-// evidence shows the agent embeds a per-invocation billing hash in a system block
-// (`cch=…` changes on every process start), and tools can legitimately grow
-// mid-conversation (deferred/MCP tool loading) — keying on either forks the
-// conversation and strands the user's edits. (User edits through OUR surface don't
-// move the key either — the unaware agent keeps resending the original view;
-// compose is what changes.) A request reproducing a known key routes to that
-// conversation; an unknown key starts a new one. Documented limitation: two
-// genuinely distinct conversations that open with a byte-identical first message
-// collide (e.g. /clear then the exact same prompt, or two parallel TUIs opening
-// identically through one proxy) — visible in `ctx conversations` + the wiretap;
-// out of scope for the tracer.
+// The first message is the right key because it is BOTH unique-per-conversation AND
+// stable-across-resends — and the head (system prompt + tools) is NEITHER:
+//   - UNIQUE: the opening turn distinguishes conversations — even the agent's own
+//     background requests (title/recap generation, quota/skills probes) open with
+//     distinct first messages. The system prompt is the opposite: it describes the
+//     agent, its tools, and the project, so it is essentially IDENTICAL across all of
+//     your conversations and cannot tell them apart. That is the PRIMARY reason the
+//     head is excluded from identity.
+//   - STABLE: history only ever appends, so the first message is fixed in the agent's
+//     own view; it proved stable across process restarts/resumes in live evidence,
+//     modulo the relocated cache_control and string/array re-encoding that identity
+//     normalization already strips. The head is unstable by comparison — a SECONDARY
+//     reason to exclude it: live wiretap evidence shows the agent embeds a per-launch
+//     billing/attestation token in a system block (`cch=…` changes on every process
+//     start), and tools can legitimately grow mid-conversation (deferred/MCP tool
+//     loading); keying on either would fork the conversation and strand the user's
+//     edits. (User edits through OUR surface don't move the key either — the unaware
+//     agent keeps resending the original view; compose is what changes.)
+// A request reproducing a known key routes to that conversation; an unknown key starts
+// a new one. Documented limitation — the same-first-message collision: two genuinely
+// distinct conversations that open with a byte-identical first message (e.g. /clear
+// then the exact same prompt, or two parallel TUIs opening identically through one
+// proxy) produce the SAME key and route to the SAME bucket. The second does not
+// interleave; because compose emits the whole bucket, the second conversation inherits
+// — is overwritten by — the first's accumulated history, and its own new turns append
+// to that shared bucket. User-visible, the two appear as ONE conversation (shown in
+// `ctx conversations` + the wiretap). Out of scope for the tracer.
 //
 // The CLI operates on the ACTIVE conversation by default: the most RECENT WIRE
 // ACTIVITY wins (F-058a, Nil-decided 2026-06-11, reviewer-gated A2) —
