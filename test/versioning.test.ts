@@ -300,6 +300,16 @@ test("a corrupt store throws on load rather than starting empty", () => {
   expect(() => reopen()).toThrow(/corrupt/);
 });
 
+// ── a pre-rename v6 store fails loudly after the op-rename v7 bump (task 97ad0626) ─
+// The rename changed persisted commit/event op-kind VALUES (strip→drop-results,
+// summarize→summarize-results); SNAPSHOT_VERSION bumped 6→7 so an older store holding
+// a historical strip/summarize commit FAILS LOUDLY on load instead of loading and then
+// refusing to revert that commit (the silent-misbehavior P1, reviewer-caught).
+test("a pre-rename v6 standalone store fails loudly (no silent op-kind drift)", () => {
+  writeFileSync(storePath, JSON.stringify({ version: 6, frames: [], commits: [], events: [] }));
+  expect(() => reopen()).toThrow(/has version 6/);
+});
+
 // ── a failed save surfaces a CLEAR error (in-memory state stays intact) ───────
 test("a failed persist throws a clear error instead of a raw fs trace", () => {
   const badPath = join(dir, "missing-dir", "store.json"); // parent dir does not exist

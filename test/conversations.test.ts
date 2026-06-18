@@ -9,7 +9,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { conversationKey, ConversationRegistry } from "../src/engine/registry.ts";
+import { conversationKey, ConversationRegistry, REGISTRY_VERSION } from "../src/engine/registry.ts";
 import { FrameStore } from "../src/engine/state.ts";
 import { fingerprintHead, fingerprintMessage } from "../src/engine/fingerprint.ts";
 import { startProxy, type ProxyHandle } from "../src/proxy/server.ts";
@@ -443,6 +443,28 @@ test("a registry file with a foreign version fails loudly", () => {
   const storePath = join(dir, "registry.json");
   Bun.write(storePath, JSON.stringify({ version: 99, convCounter: 0, ingestSeq: 0, conversations: [] }));
   expect(() => new ConversationRegistry(storePath)).toThrow(/version 99/);
+});
+
+// The op rename (task 97ad0626) changed persisted commit/event op-kind VALUES
+// (strip→drop-results, summarize→summarize-results) and bumped SNAPSHOT_VERSION 6→7.
+// A pre-rename v6 NESTED snapshot — which may hold a historical strip/summarize commit
+// — must be rejected BEFORE restore (fail-loudly per the no-migrations policy), not
+// loaded and then silently mis-reverted. Outer REGISTRY_VERSION stays valid here; only
+// the nested store version is foreign.
+test("a registry whose nested snapshot is the pre-rename v6 fails loudly", () => {
+  const storePath = join(dir, "registry.json");
+  Bun.write(
+    storePath,
+    JSON.stringify({
+      version: REGISTRY_VERSION,
+      convCounter: 1,
+      ingestSeq: 1,
+      conversations: [
+        { id: "c1", key: "k1", lastIngestAt: null, lastIngestSeq: 1, suspicious: null, store: { version: 6 } },
+      ],
+    }),
+  );
+  expect(() => new ConversationRegistry(storePath)).toThrow(/snapshot version 6/);
 });
 
 // Pre-ingest control reads see an (empty) active store, and the first ingest ADOPTS
