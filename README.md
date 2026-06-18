@@ -7,26 +7,9 @@ frame/turn level. A transparent proxy sits at the rendered-context boundary of a
 real agent (e.g. Claude Code), decomposes every `/v1/messages` request into
 **frames**, and lets you edit what the model sees — from a CLI or a browser UI —
 without the agent or the model ever knowing. See [`design.md`](./design.md) for
-the full design.
+the full design and implementation plan.
 
-## Status
-
-**Phases 1–3 and 5 are built and live-validated.** The project is currently in
-**Phase 5e: a live UI-refinement loop** — a human tests the real UI, every report
-lands in [`plans/ui-feedback.md`](./plans/ui-feedback.md) (the feedback ledger),
-and fixes ship in small reviewer-gated batches.
-
-| Phase | Scope | State |
-|---|---|---|
-| 1 | Tracer bullet: proxy → decompose → reconcile → `delete` → compose → forward | ✅ live-validated |
-| 2 | Durable store, commit history, `revert`, conversation registry, wiretap | ✅ live-validated |
-| 3 | Full op catalog (3a–3d: content, memory, structural, metadata + LLM regen) | ✅ live-validated |
-| 4 | Branching (tree, `checkout`, `import`) | ⏸ deliberately parked (re-sequenced after 5) |
-| 5 | Browser UI (5a views · 5b ops · 5c history/timeline · 5d regen via subscription) | ✅ live-validated, single-branch form |
-| 5e | Live feedback loop: refinements + fixes from real use | 🔄 ongoing |
-| 6 | Demo polish + blog | not started |
-
-## What it does today
+## What it does
 
 - **Transparent proxy** at the rendered-context boundary: byte-faithful
   passthrough for everything it doesn't understand; auth-agnostic (your
