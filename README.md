@@ -46,7 +46,7 @@ client sees. Membership and order come from the engine's compose, so deleted
 frames are gone and edited/offloaded frames show their current stand-in text.
 Clicking a bubble opens the side panel with that frame's content and metadata.
 
-![conversation view](docs/screenshots/conversation.png)
+![conversation view](docs/screenshots/conversation-panel.png)
 
 ### Frame view
 
