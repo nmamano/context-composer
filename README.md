@@ -2,31 +2,33 @@
 
 > **Writeup:** [Context Composer: Editing Your Agent's Context Behind Its Back](https://nilmamano.com/blog/context-composer)
 
-Live, in-conversation, model-unaware surgery on the working context, at the
-frame/turn level. A transparent proxy sits at the rendered-context boundary of a
-real agent (e.g. Claude Code), decomposes every `/v1/messages` request into
-**frames**, and lets you edit what the model sees — from a CLI or a browser UI —
-without the agent or the model ever knowing. See [`design.md`](./design.md) for
-the full design and implementation plan.
+A proxy that turns a Claude Code session's context into **editable frames** —
+delete, compact, offload, and reorder what the model sees, without the agent or
+the model ever knowing. It sits between Claude Code and Anthropic's servers: you
+see the raw text flowing through, and you get full control to edit it, from a CLI
+or a browser UI. It's like doing brain surgery on your agent. See
+[`design.md`](./design.md) for the full design and implementation plan.
 
 ## What it does
 
 - **Transparent proxy** at the rendered-context boundary: byte-faithful
-  passthrough for everything it doesn't understand; auth-agnostic (your
+  passthrough for everything it doesn't understand; credential-agnostic (your
   subscription or API key rides through untouched).
-- **Conversation registry**: a real agent multiplexes side queries (title
-  generation, probes) over the same endpoint — each gets its own frame store;
-  identity is derived from the opening turn, never guessed from content.
-- **Frames**: every request decomposes into a preamble (system + tools) plus one
-  frame per turn (user message + assistant reply + its tool loop, bundled).
+- **Conversation registry**: Claude Code reuses the same connection for background
+  requests (title generation, quota probes, next-message suggestions); each
+  conversation gets its own frame store, identified by its first message after the
+  system prompt — never guessed from content.
+- **Frames**: each user message plus reply becomes one frame (with its whole tool
+  loop bundled in); the system prompt + tools are a frame too — you can even delete
+  it, though Anthropic's servers will likely reject the request.
 - **Operations** — same verbs from the CLI and the UI, mechanically kept in
   parity: `delete`, `edit`, `compact`, `offload`/`restore`, `add`, `move`,
   `combine`, `split`, `drop-results`, `summarize-results`, `retitle`, `revert`.
 - **History + audit**: every op is a commit (two-column diffs, click-to-revert);
   every wire event (request/reply captures, enrichment) is a timeline entry.
-- **Auto titles/summaries** (opt-in): each captured turn gets LLM-generated
-  display metadata; frames re-title themselves once if their content materially
-  grows; manual edits always win.
+- **Auto titles/summaries** (opt-in): each captured turn gets an auto-generated
+  title by a cheap model; frames re-title themselves once if their content
+  materially grows; manual edits always win.
 - **Wiretap**: an append-only JSONL of raw wire evidence for debugging/verifying.
 
 ## A tour of the UI
@@ -39,9 +41,10 @@ session, runs the ops, photographs every view).
 
 ### Conversation view
 
-The chat as the model currently sees it — membership and order come from the
-engine's compose, so deleted frames are gone and edited/offloaded frames show
-their current stand-in text. Clicking a bubble selects its frame.
+The chat as the model currently sees it — different from what the Claude Code
+client sees. Membership and order come from the engine's compose, so deleted
+frames are gone and edited/offloaded frames show their current stand-in text.
+Clicking a bubble opens the side panel with that frame's content and metadata.
 
 ![conversation view](docs/screenshots/conversation.png)
 
